@@ -14,8 +14,12 @@ FROM nginx:alpine
 
 COPY --from=build /app/dist /usr/share/nginx/html
 COPY default.conf.template /etc/nginx/templates/default.conf.template
+COPY 15-format-backend-host.sh /docker-entrypoint.d/15-format-backend-host.sh
+
+RUN chmod +x /docker-entrypoint.d/15-format-backend-host.sh
 
 ENV BACKEND_HOST=backend:8000
+ENV NGINX_ENVSUBST_FILTER=BACKEND_HOST
 
 EXPOSE 80
 
