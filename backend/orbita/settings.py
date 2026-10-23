@@ -54,16 +54,48 @@ STATIC_URL = "static/"
 STATIC_ROOT = BASE_DIR / "staticfiles"
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 
-CORS_ALLOWED_ORIGINS = [o.strip() for o in os.environ.get("CORS_ALLOWED_ORIGINS", "http://localhost:5173,http://127.0.0.1:5173,http://localhost").split(",") if o.strip()]
+# CORS & CSRF Configuration
+raw_cors = os.environ.get("CORS_ALLOWED_ORIGINS", "http://localhost:5173,http://127.0.0.1:5173,http://localhost")
+cors_items = [o.strip() for o in raw_cors.split(",") if o.strip()]
+
+if "*" in cors_items:
+    CORS_ALLOW_ALL_ORIGINS = True
+    CORS_ALLOWED_ORIGINS = []
+else:
+    CORS_ALLOW_ALL_ORIGINS = False
+    CORS_ALLOWED_ORIGINS = [
+        o if o.startswith(("http://", "https://")) else f"https://{o}"
+        for o in cors_items
+    ]
+
 CORS_ALLOW_CREDENTIALS = True
-CSRF_TRUSTED_ORIGINS = [
-    origin.strip()
-    for origin in os.environ.get(
-        "CSRF_TRUSTED_ORIGINS",
-        os.environ.get("CORS_ALLOWED_ORIGINS", "http://localhost:5173,http://127.0.0.1:5173,http://localhost")
-    ).split(",")
-    if origin.strip()
+
+raw_csrf = os.environ.get("CSRF_TRUSTED_ORIGINS", raw_cors)
+csrf_items = [o.strip() for o in raw_csrf.split(",") if o.strip()]
+csrf_trusted = []
+for o in csrf_items:
+    if o == "*":
+        continue
+    if not o.startswith(("http://", "https://")):
+        o = f"https://{o}"
+    if o not in csrf_trusted:
+        csrf_trusted.append(o)
+
+default_trusted = [
+    "http://localhost:5173",
+    "http://127.0.0.1:5173",
+    "http://localhost",
+    "http://localhost:8000",
+    "http://127.0.0.1:8000",
+    "https://orbita.adsunifip.com",
+    "https://sge-orbita-frontend.tiegds.easypanel.host",
+    "https://sge-orbita-backend.tiegds.easypanel.host",
 ]
+for dt in default_trusted:
+    if dt not in csrf_trusted:
+        csrf_trusted.append(dt)
+
+CSRF_TRUSTED_ORIGINS = csrf_trusted
 REST_FRAMEWORK = {
     "DEFAULT_AUTHENTICATION_CLASSES": ["rest_framework.authentication.SessionAuthentication"],
     "DEFAULT_PERMISSION_CLASSES": ["rest_framework.permissions.IsAuthenticated"],
