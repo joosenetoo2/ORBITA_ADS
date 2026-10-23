@@ -7,6 +7,7 @@ import {
   CircleAlert,
   Clock3,
   DoorOpen,
+  FileUp,
   GraduationCap,
   Layers,
   LayoutDashboard,
@@ -26,8 +27,9 @@ import ScheduleEditor from './ScheduleEditor';
 import GridWorkspace from './GridWorkspace';
 import type { AuthUser } from './AuthGate';
 import { matchesSearch } from './textUtils';
+import { ImportModal, OfferModal, type ImportKind } from './CatalogActions';
 
-type Section = 'grid' | 'overview' | 'catalog' | 'time' | 'schedules';
+type Section = 'grid' | 'overview' | 'catalog' | 'import' | 'time' | 'schedules';
 type Resource =
   | 'institutions'
   | 'academic-terms'
@@ -111,7 +113,10 @@ const labels: Record<string, string> = {
   ends_on: 'Data final',
   modality: 'Modalidade',
   total_workload: 'Carga horária total',
-  workload_unit: 'Unidade da carga',
+  credits: 'Créditos',
+  onsite_weekly_hours: 'Horas presenciais por semana',
+  ead_percentage: 'Percentual EAD',
+  weekly_hours: 'Horas presenciais/semana',
   max_weekly_minutes: 'Limite semanal (minutos)',
   capacity: 'Capacidade',
   location: 'Localização',
@@ -148,7 +153,6 @@ const fieldsets: Record<Resource, Field[]> = {
   institutions: [
     { key: 'name', required: true },
     { key: 'timezone', required: true },
-    { key: 'class_minutes', type: 'number', required: true },
     { key: 'slot_granularity_minutes', type: 'number', required: true }
   ],
   'academic-terms': [
@@ -167,14 +171,14 @@ const fieldsets: Record<Resource, Field[]> = {
     { key: 'institution', source: 'institutions', required: true },
     { key: 'code', required: true },
     { key: 'name', required: true },
-    { key: 'total_workload', type: 'number', required: true },
-    { key: 'workload_unit', options: [['CLASS_HOUR', 'Hora-aula'], ['CLOCK_HOUR', 'Hora-relógio']], required: true }
+    { key: 'credits', type: 'number', required: true },
+    { key: 'onsite_weekly_hours', type: 'number', required: true },
+    { key: 'ead_percentage', type: 'number', required: true }
   ],
   teachers: [
     { key: 'institution', source: 'institutions', required: true },
     { key: 'code', required: true },
-    { key: 'name', required: true },
-    { key: 'max_weekly_minutes', type: 'number' }
+    { key: 'name', required: true }
   ],
   rooms: [
     { key: 'institution', source: 'institutions', required: true },
@@ -186,27 +190,18 @@ const fieldsets: Record<Resource, Field[]> = {
   'class-groups': [
     { key: 'course', source: 'courses', required: true },
     { key: 'term', source: 'academic-terms', required: true },
-    { key: 'code', required: true }
+    { key: 'code', required: true },
+    { key: 'name', required: true }
   ],
-  'subject-offerings': [
-    { key: 'group', source: 'class-groups', required: true },
-    { key: 'subject', source: 'subjects', required: true },
-    { key: 'weekly_minutes', type: 'number', required: true },
-    { key: 'eligible_teachers', source: 'teachers', multiple: true, required: true }
-  ],
-  'session-requirements': [
-    { key: 'offering', source: 'subject-offerings', required: true },
-    { key: 'duration_minutes', type: 'number', required: true },
-    { key: 'weekly_count', type: 'number', required: true },
-    { key: 'kind' }
-  ],
+  'subject-offerings': [],
+  'session-requirements': [],
   'time-profiles': [
     { key: 'institution', source: 'institutions', required: true },
     { key: 'name', required: true }
   ],
   'time-windows': [
     { key: 'institution', source: 'institutions', required: true },
-    { key: 'profile', source: 'time-profiles' },
+    { key: 'profile', source: 'time-profiles', required: true },
     {
       key: 'scope',
       options: [
@@ -255,24 +250,29 @@ function getResourceColumns(resource: Resource): string[] {
     : resource === 'time-windows'
     ? ['weekday', 'starts_at', 'ends_at']
     : resource === 'subject-offerings'
-    ? ['group', 'subject', 'weekly_minutes', 'eligible_teachers']
+    ? ['group', 'subject', 'weekly_hours', 'eligible_teachers']
     : resource === 'session-requirements'
     ? ['offering', 'duration_minutes', 'weekly_count', 'kind']
     : resource === 'institutions'
-    ? ['name', 'timezone', 'class_minutes', 'slot_granularity_minutes']
+    ? ['name', 'timezone', 'slot_granularity_minutes']
     : resource === 'time-profiles'
     ? ['name']
     : resource === 'courses'
     ? ['code', 'name', 'modality']
     : resource === 'subjects'
-    ? ['code', 'name', 'total_workload', 'workload_unit']
+    ? ['code', 'name', 'credits', 'total_workload', 'onsite_weekly_hours', 'ead_percentage']
     : resource === 'teachers'
-    ? ['code', 'name', 'max_weekly_minutes']
+    ? ['code', 'name']
+    : resource === 'class-groups'
+    ? ['code', 'name', 'course', 'term']
     : ['code', 'name'];
 }
 
 function displayResourceValue(row: RecordItem, key: string, data: Data) {
   if (key === 'weekday') return weekdayNames[Number(row[key])];
+  if (key === 'weekly_hours') return `${Number(row.weekly_minutes ?? 0) / 60} h`;
+  if (key === 'total_workload') return `${String(row[key] ?? '—')} h`;
+  if (key === 'ead_percentage') return `${String(row[key] ?? 0)}%`;
   if (key === 'workload_unit') return row[key] === 'CLASS_HOUR' ? 'Hora-aula' : 'Hora-relógio';
   if (key === 'eligible_teachers' && Array.isArray(row[key])) {
     const teacherNames = (row[key] as number[]).map((id) => {
@@ -305,9 +305,10 @@ function getInitialValues(resource: Resource, item: RecordItem | null, data: Dat
   if (!item) {
     return {
       timezone: 'America/Fortaleza',
-      class_minutes: '50',
+      class_minutes: '60',
       slot_granularity_minutes: '10',
       workload_unit: 'CLASS_HOUR',
+      ead_percentage: '0',
       scope: 'INSTITUTION',
       institution: String(data.institutions[0]?.id ?? '')
     };
@@ -337,18 +338,20 @@ function getInitialValues(resource: Resource, item: RecordItem | null, data: Dat
 function Modal({
   resource,
   item,
+  defaults,
   data,
   onClose,
   onSaved
 }: {
   resource: Resource;
   item: RecordItem | null;
+  defaults?: Record<string, string>;
   data: Data;
   onClose: () => void;
   onSaved: (noticeMessage: string) => void;
 }) {
   const isEditing = Boolean(item);
-  const [values, setValues] = useState<Record<string, string>>(() => getInitialValues(resource, item, data));
+  const [values, setValues] = useState<Record<string, string>>(() => ({ ...getInitialValues(resource, item, data), ...defaults }));
   const [error, setError] = useState('');
   const [saving, setSaving] = useState(false);
 
@@ -491,14 +494,18 @@ function Modal({
                       disabled={isImmutable}
                       type={field.type ?? 'text'}
                       min={field.type === 'number' ? 0 : undefined}
+                      max={field.key === 'ead_percentage' ? 100 : undefined}
+                      list={resource === 'class-groups' && field.key === 'name' ? 'group-name-options' : undefined}
                       value={values[field.key] ?? ''}
-                      onChange={(event) => setValues({ ...values, [field.key]: event.target.value })}
+                      onChange={(event) => setValues({ ...values, [field.key]: event.target.value, ...(resource === 'subjects' && field.key === 'credits' && !values.onsite_weekly_hours ? { onsite_weekly_hours: event.target.value } : {}) })}
                     />
                   )}
                 </label>
               );
             })}
           </div>
+          {resource === 'class-groups' && <datalist id="group-name-options">{Array.from({ length: 10 }, (_, index) => index + 1).flatMap((period) => ['A', 'B', 'C', 'D'].map((letter) => <option key={`${period}-${letter}`} value={`${period}º ${letter}`} />))}</datalist>}
+          {resource === 'subjects' && <p className="catalog-hint">Cada crédito corresponde a 1 hora-aula semanal de 60 minutos e a 20 horas-aula totais. Informe separadamente quantas horas semanais presenciais entram na grade; a parte EAD fica fora dela.</p>}
 
           {error && (
             <p className="form-error" role="alert">
@@ -549,12 +556,14 @@ function DataCard({
 function ListPanel({
   resource,
   rows,
+  title,
   onAdd,
   onEdit,
   data
 }: {
   resource: Resource;
   rows: RecordItem[];
+  title?: string;
   onAdd: () => void;
   onEdit: (item: RecordItem) => void;
   data: Data;
@@ -567,7 +576,7 @@ function ListPanel({
         <div>
           <span className="eyebrow">CONFIGURAÇÃO</span>
           <h3>
-            {rows.length === 1 ? resourceNames[resource] : resourcePluralNames[resource]}
+            {title ?? (rows.length === 1 ? resourceNames[resource] : resourcePluralNames[resource])}
           </h3>
         </div>
         <button className="button small" onClick={onAdd} aria-label={`Adicionar ${resourceAddLabels[resource].toLowerCase()}`}>
@@ -635,14 +644,15 @@ export default function App({
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
   const [loading, setLoading] = useState(true);
-  const [modalTarget, setModalTarget] = useState<{ resource: Resource; item: RecordItem | null } | null>(null);
+  const [modalTarget, setModalTarget] = useState<{ resource: Resource; item: RecordItem | null; defaults?: Record<string, string> } | null>(null);
   const [mobileNav, setMobileNav] = useState(false);
   const [gridRefresh, setGridRefresh] = useState(0);
+  const [offerTarget, setOfferTarget] = useState<{ subjectId?: number; teacherId?: number; groupId?: number } | null>(null);
+  const [importKind, setImportKind] = useState<ImportKind | null>(null);
 
   // Tabbed catalog state
   const [catalogTab, setCatalogTab] = useState<Resource>('subjects');
   const [catalogSearch, setCatalogSearch] = useState('');
-  const [offeringSubView, setOfferingSubView] = useState<'offerings' | 'requirements'>('offerings');
 
   const loadData = useCallback(async () => {
     setLoading(true);
@@ -668,6 +678,7 @@ export default function App({
     () => [
       { id: 'grid' as Section, title: 'Grade de aulas', icon: CalendarDays },
       { id: 'catalog' as Section, title: 'Cadastros', icon: BookOpen },
+      { id: 'import' as Section, title: 'Importar em lote', icon: FileUp },
       { id: 'overview' as Section, title: 'Visão geral', icon: LayoutDashboard },
       { id: 'time' as Section, title: 'Regras de horário', icon: Clock3 },
       { id: 'schedules' as Section, title: 'Editor detalhado', icon: Settings2 },
@@ -679,7 +690,7 @@ export default function App({
     () => [
       { id: 'subjects' as Resource, label: 'Disciplinas', icon: BookOpen, count: data.subjects.length, description: 'Matriz curricular, cargas horárias e disciplinas' },
       { id: 'class-groups' as Resource, label: 'Turmas', icon: Users, count: data['class-groups'].length, description: 'Turmas vinculadas a cursos e períodos letivos' },
-      { id: 'teachers' as Resource, label: 'Professores', icon: GraduationCap, count: data.teachers.length, description: 'Corpo docente, matrículas e limites semanais' },
+      { id: 'teachers' as Resource, label: 'Professores', icon: GraduationCap, count: data.teachers.length, description: 'Docentes disponíveis para as ofertas de disciplinas' },
       { id: 'rooms' as Resource, label: 'Salas', icon: DoorOpen, count: data.rooms.length, description: 'Salas de aula, laboratórios e capacidade de ocupação' },
       { id: 'academic-terms' as Resource, label: 'Períodos Letivos', icon: Calendar, count: data['academic-terms'].length, description: 'Semestres acadêmicos e intervalos de vigência' },
       { id: 'courses' as Resource, label: 'Cursos', icon: School, count: data.courses.length, description: 'Cursos de graduação e tecnologia da instituição' },
@@ -705,8 +716,8 @@ export default function App({
     return user.groups?.[0] || 'Coordenador';
   }, [user]);
 
-  const openCreateModal = (resource: Resource) => {
-    setModalTarget({ resource, item: null });
+  const openCreateModal = (resource: Resource, defaults?: Record<string, string>) => {
+    setModalTarget({ resource, item: null, defaults });
   };
 
   const openEditModal = (resource: Resource, item: RecordItem) => {
@@ -714,10 +725,7 @@ export default function App({
   };
 
   // Determine active resource in the catalog tab
-  const activeResource: Resource =
-    catalogTab === 'subject-offerings' && offeringSubView === 'requirements'
-      ? 'session-requirements'
-      : catalogTab;
+  const activeResource: Resource = catalogTab;
 
   const activeRows = data[activeResource] ?? [];
   const filteredRows = useMemo(() => {
@@ -1032,42 +1040,18 @@ export default function App({
                       <div>
                         <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
                           <h2 style={{ margin: 0, fontSize: '18px', fontWeight: 800 }}>
-                            {catalogTab === 'subject-offerings' && offeringSubView === 'requirements'
-                              ? 'Encontros Requeridos'
-                              : catalogTabs.find((t) => t.id === catalogTab)?.label}
+                            {catalogTabs.find((t) => t.id === catalogTab)?.label}
                           </h2>
                           <span className="tab-badge" style={{ fontSize: '12px', padding: '3px 10px' }}>
                             {filteredRows.length} registro(s)
                           </span>
                         </div>
                         <p style={{ margin: '4px 0 0', fontSize: '13px', color: 'var(--color-text-muted)' }}>
-                          {catalogTab === 'subject-offerings' && offeringSubView === 'requirements'
-                            ? 'Parâmetros de quebra de carga horária (duração e quantidade de aulas por semana).'
-                            : catalogTabs.find((t) => t.id === catalogTab)?.description}
+                          {catalogTabs.find((t) => t.id === catalogTab)?.description}
                         </p>
                       </div>
 
                       <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
-                        {/* Sub-view toggle when inside subject-offerings */}
-                        {catalogTab === 'subject-offerings' && (
-                          <div className="sheet-toggle" style={{ margin: 0 }}>
-                            <button
-                              type="button"
-                              className={offeringSubView === 'offerings' ? 'active' : ''}
-                              onClick={() => setOfferingSubView('offerings')}
-                            >
-                              Ofertas ({data['subject-offerings'].length})
-                            </button>
-                            <button
-                              type="button"
-                              className={offeringSubView === 'requirements' ? 'active' : ''}
-                              onClick={() => setOfferingSubView('requirements')}
-                            >
-                              Encontros requeridos ({data['session-requirements'].length})
-                            </button>
-                          </div>
-                        )}
-
                         <div className="catalog-search-wrap">
                           <Search size={15} />
                           <input
@@ -1079,37 +1063,12 @@ export default function App({
                           />
                         </div>
 
-                        <button
-                          className="button primary"
-                          onClick={() => openCreateModal(activeResource)}
-                        >
-                          <Plus size={16} />
-                          {resourceAddLabels[activeResource]}
-                        </button>
+                        {(['courses', 'subjects', 'teachers', 'rooms', 'class-groups', 'subject-offerings'] as Resource[]).includes(activeResource) && <button className="button" onClick={() => setImportKind(activeResource === 'subject-offerings' ? 'offerings' : activeResource as ImportKind)}><FileUp size={16} />Importar em lote</button>}
+                        <button className="button primary" onClick={() => activeResource === 'subject-offerings' ? setOfferTarget({}) : openCreateModal(activeResource)}><Plus size={16} />{activeResource === 'subject-offerings' ? 'Ofertar disciplina' : resourceAddLabels[activeResource]}</button>
                       </div>
                     </div>
 
-                    {/* Explanatory banner for Offerings and Session Requirements */}
-                    {catalogTab === 'subject-offerings' && (
-                      <div
-                        style={{
-                          padding: '12px 24px',
-                          background: '#eff6ff',
-                          borderBottom: '1px solid #bfdbfe',
-                          fontSize: '12.5px',
-                          color: '#1e3a5f',
-                          display: 'flex',
-                          alignItems: 'center',
-                          gap: 10
-                        }}
-                      >
-                        <Clock3 size={16} style={{ flexShrink: 0, color: 'var(--color-secondary)' }} />
-                        <span>
-                          <strong>Para que serve o Encontro Requerido?</strong> Ele define como a carga horária semanal é dividida em aulas (ex: 2 encontros de 100 min em dias diferentes).
-                          Na tela de <strong>Grade de aulas</strong>, isso é gerado e ajustado automaticamente quando você aloca aulas na matriz.
-                        </span>
-                      </div>
-                    )}
+                    {catalogTab === 'subject-offerings' && <div className="catalog-hint-banner">As horas presenciais semanais são definidas na disciplina. Ao ofertar, escolha turma e professor; os blocos para a grade são preparados automaticamente.</div>}
 
                     {/* Table View */}
                     <div className="table-wrap" style={{ maxHeight: 'calc(100vh - 360px)', minHeight: '260px' }}>
@@ -1134,7 +1093,7 @@ export default function App({
                                   <td key={key}>{displayResourceValue(row, key, data)}</td>
                                 ))}
                                 <td style={{ textAlign: 'center', padding: '6px 12px' }}>
-                                  <button
+                                  {activeResource !== 'subject-offerings' && <button
                                     className="button small ghost"
                                     style={{ padding: '4px 10px', minHeight: '30px' }}
                                     onClick={() => openEditModal(activeResource, row)}
@@ -1143,7 +1102,10 @@ export default function App({
                                   >
                                     <Pencil size={14} style={{ color: 'var(--color-secondary)' }} />
                                     <span style={{ fontSize: '12px', marginLeft: 4 }}>Editar</span>
-                                  </button>
+                                  </button>}
+                                  {activeResource === 'subjects' && <button className="button small" onClick={() => setOfferTarget({ subjectId: row.id })}>Ofertar · professor</button>}
+                                  {activeResource === 'teachers' && <button className="button small" onClick={() => setOfferTarget({ teacherId: row.id })}>Alocar a oferta</button>}
+                                  {activeResource === 'subject-offerings' && <button className="button small" onClick={() => setOfferTarget({ subjectId: Number(row.subject), groupId: Number(row.group) })}>Alocar professor</button>}
                                 </td>
                               </tr>
                             ))}
@@ -1161,6 +1123,8 @@ export default function App({
                 </>
               )}
 
+              {section === 'import' && <><div className="page-heading"><div><span className="eyebrow">CADASTRO RÁPIDO</span><h1>Importar em lote</h1><p>Cole linhas da planilha ou carregue CSV/TSV. Baixe um modelo para cada tipo de cadastro.</p></div></div><div className="import-grid">{([['courses', 'Cursos', 'Códigos, nomes e modalidades'], ['subjects', 'Disciplinas', 'Créditos, horas presenciais e percentual EAD'], ['teachers', 'Professores', 'Códigos e nomes, sem limite semanal'], ['rooms', 'Salas', 'Códigos, nomes e capacidade'], ['class-groups', 'Turmas', 'Códigos e nomes vinculados ao curso e período'], ['offerings', 'Ofertas', 'Turma, disciplina, professor e horas por bloco']] as [ImportKind, string, string][]).map(([kind, title, description]) => <section className="panel import-card" key={kind}><FileUp size={22} /><h3>{title}</h3><p>{description}</p><button className="button primary" onClick={() => setImportKind(kind)}>Importar {title.toLowerCase()}</button></section>)}</div></>}
+
               {section === 'time' && (
                 <>
                   <div className="page-heading">
@@ -1174,21 +1138,12 @@ export default function App({
                       Novo perfil
                     </button>
                   </div>
-                  <div className="time-grid">
-                    <ListPanel
-                      resource="time-profiles"
-                      rows={data['time-profiles']}
-                      data={data}
-                      onAdd={() => openCreateModal('time-profiles')}
-                      onEdit={(item) => openEditModal('time-profiles', item)}
-                    />
-                    <ListPanel
-                      resource="time-windows"
-                      rows={data['time-windows']}
-                      data={data}
-                      onAdd={() => openCreateModal('time-windows')}
-                      onEdit={(item) => openEditModal('time-windows', item)}
-                    />
+                  <div className="profile-grid">
+                    {data['time-profiles'].map((profile) => {
+                      const windows = data['time-windows'].filter((window) => Number(window.profile) === profile.id);
+                      return <section className="panel profile-card" key={profile.id}><div className="panel-head"><div><span className="eyebrow">PERFIL DE HORÁRIO</span><h3>{String(profile.name)}</h3><small>{windows.length} janela(s)</small></div><div className="profile-actions"><button className="button small ghost" onClick={() => openEditModal('time-profiles', profile)}><Pencil size={14} />Editar perfil</button><button className="button small" onClick={() => openCreateModal('time-windows', { profile: String(profile.id), institution: String(profile.institution) })}><Plus size={14} />Janela neste perfil</button></div></div>{windows.length ? <div className="profile-windows">{windows.map((window) => <div className="profile-window" key={window.id}><span><strong>{weekdayNames[Number(window.weekday)]}</strong> {String(window.starts_at).slice(0, 5)}–{String(window.ends_at).slice(0, 5)} <small>· {String(window.scope === 'INSTITUTION' ? 'Instituição' : window.scope)}</small></span><button className="button small ghost" onClick={() => openEditModal('time-windows', window)}><Pencil size={14} />Editar</button></div>)}</div> : <div className="empty-list">Nenhuma janela neste perfil. Use “Janela neste perfil”.</div>}</section>;
+                    })}
+                    <ListPanel resource="time-windows" title="Janelas sem perfil" rows={data['time-windows'].filter((window) => !window.profile)} data={data} onAdd={() => openCreateModal('time-windows')} onEdit={(item) => openEditModal('time-windows', item)} />
                   </div>
                   <div className="info-note">
                     <Clock3 size={18} />
@@ -1209,6 +1164,7 @@ export default function App({
           key={`${modalTarget.resource}-${modalTarget.item?.id ?? 'new'}`}
           resource={modalTarget.resource}
           item={modalTarget.item}
+          defaults={modalTarget.defaults}
           data={data}
           onClose={() => setModalTarget(null)}
           onSaved={(msg) => {
@@ -1218,6 +1174,8 @@ export default function App({
           }}
         />
       )}
+      {offerTarget && <OfferModal data={data} {...offerTarget} onClose={() => setOfferTarget(null)} onSaved={(message) => { setOfferTarget(null); setNotice(message); void loadData(); }} />}
+      {importKind && <ImportModal kind={importKind} data={data} onClose={() => setImportKind(null)} onSaved={(message) => { setImportKind(null); setNotice(message); void loadData(); }} />}
     </div>
   );
 }

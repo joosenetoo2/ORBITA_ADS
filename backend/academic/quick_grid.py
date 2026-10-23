@@ -158,14 +158,23 @@ def save_cell(schedule, data):
     room = room_by_code(institution, data.get("room"))
     offering, _ = models.SubjectOffering.objects.get_or_create(group=group, subject=subject)
     offering.eligible_teachers.add(teacher)
-    requirement = models.SessionRequirement.objects.filter(offering=offering, duration_minutes=duration, kind="GRADE").first()
-    if requirement is None:
-        requirement = models.SessionRequirement.objects.create(offering=offering, duration_minutes=duration, weekly_count=1, kind="GRADE")
-        occurrence = 1
-    else:
+    planned = models.SessionRequirement.objects.filter(offering=offering, kind="AUTO_OFFER")
+    if planned.exists():
+        requirement = planned.filter(duration_minutes=duration).first()
+        if requirement is None:
+            raise ValidationError({"span": "Esta oferta não prevê um bloco com essa duração."})
         occurrence = (models.ScheduledSession.objects.filter(requirement=requirement).aggregate(Max("occurrence"))["occurrence__max"] or 0) + 1
-        requirement.weekly_count = occurrence
-        requirement.save(update_fields=["weekly_count"])
+        if occurrence > requirement.weekly_count:
+            raise ValidationError({"offering": "Todas as horas presenciais desta oferta já foram alocadas."})
+    else:
+        requirement = models.SessionRequirement.objects.filter(offering=offering, duration_minutes=duration, kind="GRADE").first()
+        if requirement is None:
+            requirement = models.SessionRequirement.objects.create(offering=offering, duration_minutes=duration, weekly_count=1, kind="GRADE")
+            occurrence = 1
+        else:
+            occurrence = (models.ScheduledSession.objects.filter(requirement=requirement).aggregate(Max("occurrence"))["occurrence__max"] or 0) + 1
+            requirement.weekly_count = occurrence
+            requirement.save(update_fields=["weekly_count"])
     session = models.ScheduledSession.objects.create(
         schedule=schedule, requirement=requirement, occurrence=occurrence, weekday=weekday,
         starts_at=chosen[0].starts_at, ends_at=chosen[-1].ends_at, teacher=teacher, room=room,
@@ -173,7 +182,8 @@ def save_cell(schedule, data):
     conflicts = validate_session(session)
     if conflicts:
         raise GridConflict(conflicts)
-    reconcile(requirement)
+    if requirement.kind == "GRADE":
+        reconcile(requirement)
     return session
 
 

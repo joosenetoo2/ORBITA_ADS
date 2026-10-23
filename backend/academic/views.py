@@ -1,5 +1,6 @@
 from datetime import date
 
+from django.core.exceptions import ValidationError as DjangoValidationError
 from django.db import transaction
 from django.db.models import F
 from django.shortcuts import get_object_or_404
@@ -7,11 +8,13 @@ from rest_framework import status, viewsets
 from rest_framework.decorators import action
 from rest_framework.exceptions import MethodNotAllowed, ValidationError
 from rest_framework.response import Response
+from rest_framework.views import APIView
 
 from . import models, serializers
 from .permissions import AcademicPermission
 from .scheduling import candidate_starts, validate_session
-from .quick_grid import GridConflict, delete_cell, parse_time, save_cell
+from .quick_grid import GridConflict, delete_cell, make_code, parse_time, save_cell
+from .catalog_flow import offer_subject
 
 
 class AcademicViewSet(viewsets.ModelViewSet):
@@ -40,7 +43,19 @@ class InstitutionViewSet(AcademicViewSet):
 
 AcademicTermViewSet = viewset_for(models.AcademicTerm, serializers.AcademicTermSerializer)
 CourseViewSet = viewset_for(models.Course, serializers.CourseSerializer)
-SubjectViewSet = viewset_for(models.Subject, serializers.SubjectSerializer)
+class SubjectViewSet(AcademicViewSet):
+    queryset = models.Subject.objects.all().order_by("pk")
+    serializer_class = serializers.SubjectSerializer
+
+    @action(detail=True, methods=["post"])
+    def offer(self, request, pk=None):
+        subject = self.get_object()
+        group = get_object_or_404(models.ClassGroup, pk=request.data.get("group_id"))
+        teacher = get_object_or_404(models.Teacher, pk=request.data.get("teacher_id"))
+        with transaction.atomic():
+            offering, created = offer_subject(subject, group, teacher, request.data.get("block_hours", 2))
+            models.AuditEvent.objects.create(actor=request.user, action="SUBJECT_OFFERED", entity="SubjectOffering", entity_id=str(offering.pk), metadata={"subject_id": subject.pk, "group_id": group.pk, "teacher_id": teacher.pk, "created": created})
+        return Response({"id": offering.pk, "created": created, "weekly_hours": offering.weekly_minutes // 60}, status=status.HTTP_201_CREATED if created else status.HTTP_200_OK)
 CurriculumViewSet = viewset_for(models.Curriculum, serializers.CurriculumSerializer)
 CurriculumPeriodViewSet = viewset_for(models.CurriculumPeriod, serializers.CurriculumPeriodSerializer)
 TeacherViewSet = viewset_for(models.Teacher, serializers.TeacherSerializer)
@@ -49,6 +64,93 @@ RoomViewSet = viewset_for(models.Room, serializers.RoomSerializer)
 ClassGroupViewSet = viewset_for(models.ClassGroup, serializers.ClassGroupSerializer)
 SubjectOfferingViewSet = viewset_for(models.SubjectOffering, serializers.SubjectOfferingSerializer)
 SessionRequirementViewSet = viewset_for(models.SessionRequirement, serializers.SessionRequirementSerializer)
+
+
+class BatchImportView(APIView):
+    permission_classes = [AcademicPermission]
+
+    @staticmethod
+    def _integer(value, label, *, minimum=0, maximum=None):
+        try:
+            result = int(value)
+        except (TypeError, ValueError):
+            raise ValidationError({label: "Informe um número inteiro."})
+        if result < minimum or (maximum is not None and result > maximum):
+            raise ValidationError({label: f"Use um valor entre {minimum} e {maximum if maximum is not None else 'o máximo permitido'}."})
+        return result
+
+    def post(self, request):
+        resource = request.data.get("resource")
+        rows = request.data.get("rows")
+        if resource not in {"subjects", "teachers", "rooms", "class-groups", "courses", "offerings"}:
+            raise ValidationError({"resource": "Escolha cursos, disciplinas, professores, salas, turmas ou ofertas."})
+        if not isinstance(rows, list) or not rows or len(rows) > 500:
+            raise ValidationError({"rows": "Envie de 1 a 500 linhas."})
+        institution = models.Institution.objects.first()
+        if institution is None:
+            raise ValidationError({"institution": "Cadastre a instituição antes de importar."})
+        group_course = group_term = None
+        if resource == "class-groups":
+            group_course = get_object_or_404(models.Course, pk=request.data.get("course_id"), institution=institution)
+            group_term = get_object_or_404(models.AcademicTerm, pk=request.data.get("term_id"), institution=institution)
+        created = skipped = updated = 0
+        with transaction.atomic():
+            for index, row in enumerate(rows, 1):
+                if not isinstance(row, dict):
+                    raise ValidationError({"row": index, "message": "Linha inválida."})
+                try:
+                    code = str(row.get("code", "")).strip()
+                    name = str(row.get("name", "")).strip()
+                    if resource in {"subjects", "teachers", "rooms", "class-groups", "courses"}:
+                        if not name and resource != "class-groups":
+                            raise ValidationError({"name": "Informe o nome."})
+                        if not code:
+                            code = make_code({"subjects": models.Subject, "teachers": models.Teacher, "rooms": models.Room, "courses": models.Course}.get(resource), institution, name) if resource != "class-groups" else name
+                        if not code:
+                            raise ValidationError({"code": "Informe o código da turma."})
+                    if resource == "courses":
+                        if models.Course.objects.filter(institution=institution, code__iexact=code).exists():
+                            skipped += 1; continue
+                        obj = models.Course(institution=institution, code=code, name=name, modality=str(row.get("modality", "")).strip())
+                    elif resource == "subjects":
+                        if models.Subject.objects.filter(institution=institution, code__iexact=code).exists():
+                            skipped += 1; continue
+                        credits = self._integer(row.get("credits"), "credits", minimum=1, maximum=40)
+                        onsite = self._integer(row.get("onsite_weekly_hours"), "onsite_weekly_hours", maximum=credits)
+                        ead = self._integer(row.get("ead_percentage", 0) or 0, "ead_percentage", maximum=100)
+                        obj = models.Subject(institution=institution, code=code, name=name, credits=credits,
+                                             onsite_weekly_hours=onsite, ead_percentage=ead,
+                                             total_workload=credits * 20, workload_unit=models.Subject.Unit.CLASS_HOUR)
+                    elif resource == "teachers":
+                        if models.Teacher.objects.filter(institution=institution, code__iexact=code).exists():
+                            skipped += 1; continue
+                        obj = models.Teacher(institution=institution, code=code, name=name)
+                    elif resource == "rooms":
+                        if models.Room.objects.filter(institution=institution, code__iexact=code).exists():
+                            skipped += 1; continue
+                        capacity = row.get("capacity")
+                        obj = models.Room(institution=institution, code=code, name=name,
+                                          capacity=self._integer(capacity, "capacity") if capacity not in (None, "") else None)
+                    elif resource == "class-groups":
+                        if models.ClassGroup.objects.filter(term=group_term, code__iexact=code).exists():
+                            skipped += 1; continue
+                        obj = models.ClassGroup(course=group_course, term=group_term, code=code, name=name or code)
+                    else:
+                        group = get_object_or_404(models.ClassGroup, term__institution=institution, code__iexact=str(row.get("group_code", "")).strip())
+                        subject = get_object_or_404(models.Subject, institution=institution, code__iexact=str(row.get("subject_code", "")).strip())
+                        teacher = get_object_or_404(models.Teacher, institution=institution, code__iexact=str(row.get("teacher_code", "")).strip())
+                        _, was_created = offer_subject(subject, group, teacher, row.get("block_hours", 2))
+                        if was_created: created += 1
+                        else: updated += 1
+                        continue
+                    obj.full_clean()
+                    obj.save()
+                    created += 1
+                except (ValidationError, DjangoValidationError) as error:
+                    detail = error.detail if isinstance(error, ValidationError) else error.message_dict
+                    raise ValidationError({"row": index, "errors": detail})
+            models.AuditEvent.objects.create(actor=request.user, action="BATCH_IMPORTED", entity=resource, entity_id="batch", metadata={"created": created, "skipped": skipped, "updated": updated})
+        return Response({"created": created, "skipped": skipped, "updated": updated})
 
 
 class SafeTimeConfigurationMixin:

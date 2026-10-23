@@ -26,6 +26,7 @@ for route, viewset in [
 
 session_detail = views.ScheduleSessionViewSet.as_view({"patch": "partial_update", "delete": "destroy"})
 urlpatterns = [
+    path("batch-import/", views.BatchImportView.as_view(), name="batch-import"),
     path("auth/session/", auth_views.session_view, name="auth-session"),
     path("auth/login/", auth_views.login_view, name="auth-login"),
     path("auth/logout/", auth_views.logout_view, name="auth-logout"),
