@@ -1,0 +1,25 @@
+# Python / Django
+backend/.env
+backend/.venv/
+.venv/
+__pycache__/
+backend/**/__pycache__/
+*.py[cod]
+*$py.class
+backend/db.sqlite3
+backend/db.sqlite3-journal
+
+# Node / Frontend
+frontend/node_modules/
+node_modules/
+frontend/dist/
+frontend/*.tsbuildinfo
+.npm-cache/
+
+# Tools & Local
+.tools/
+.agents/
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db

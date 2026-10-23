@@ -1,0 +1,637 @@
+/* ==========================================================================
+   Timetable Grid Workspace Styles (UI/UX Pro Max)
+   ========================================================================== */
+
+.grid-workspace {
+  max-width: 1440px;
+  margin: 0 auto;
+}
+
+.grid-heading {
+  margin-bottom: 24px;
+}
+
+/* Quick Metrics Bar */
+.grid-metrics {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 16px;
+  margin-bottom: 24px;
+}
+
+.metric-pill {
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  padding: 14px 18px;
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  box-shadow: var(--shadow-xs);
+  transition: transform var(--transition-fast), box-shadow var(--transition-fast);
+}
+
+.metric-pill:hover {
+  transform: translateY(-1px);
+  box-shadow: var(--shadow-sm);
+}
+
+.metric-icon {
+  width: 38px;
+  height: 38px;
+  border-radius: var(--radius-sm);
+  background: var(--color-primary-light);
+  color: var(--color-secondary);
+  display: grid;
+  place-items: center;
+  flex-shrink: 0;
+}
+
+.metric-data {
+  display: flex;
+  flex-direction: column;
+}
+
+.metric-value {
+  font-size: 20px;
+  font-weight: 800;
+  color: var(--color-text);
+  line-height: 1.1;
+  font-variant-numeric: tabular-nums;
+}
+
+.metric-label {
+  font-size: 11.5px;
+  font-weight: 600;
+  color: var(--color-text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  margin-top: 2px;
+}
+
+/* Initial / Empty State */
+.sheet-start {
+  padding: 70px 32px;
+  text-align: center;
+  color: var(--color-text-secondary);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  border: 1px dashed var(--color-border-strong);
+  background: linear-gradient(180deg, var(--color-surface) 0%, var(--color-bg) 100%);
+  border-radius: var(--radius-lg);
+}
+
+.sheet-start-icon {
+  width: 72px;
+  height: 72px;
+  border-radius: var(--radius-xl);
+  background: var(--color-primary-light);
+  color: var(--color-secondary);
+  display: grid;
+  place-items: center;
+  margin-bottom: 20px;
+  box-shadow: 0 8px 20px rgba(37, 99, 235, 0.12);
+}
+
+.sheet-start h2 {
+  color: var(--color-text);
+  font-size: 22px;
+  margin: 0 0 10px;
+}
+
+.sheet-start p {
+  max-width: 540px;
+  margin: 0 auto 24px;
+  line-height: 1.6;
+  font-size: 14px;
+  color: var(--color-text-muted);
+}
+
+/* Timetable Toolbar Card */
+.sheet-toolbar-card {
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  padding: 18px 22px;
+  margin-bottom: 24px;
+  box-shadow: var(--shadow-card);
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.sheet-toolbar-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+
+.sheet-selector {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.sheet-selector label {
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--color-text-secondary);
+  white-space: nowrap;
+}
+
+.sheet-selector select {
+  min-width: 280px;
+  height: 40px;
+  border: 1px solid var(--color-border-strong);
+  border-radius: var(--radius-sm);
+  padding: 0 12px;
+  background: var(--color-surface);
+  color: var(--color-text);
+  font-weight: 600;
+  font-size: 13.5px;
+  box-shadow: var(--shadow-xs);
+  cursor: pointer;
+  transition: border-color var(--transition-fast);
+}
+
+.sheet-selector select:focus {
+  border-color: var(--color-ring);
+  outline: 0;
+  box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.15);
+}
+
+.sheet-tools {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+/* View Mode Switcher Toggle */
+.sheet-toggle {
+  display: inline-flex;
+  padding: 3px;
+  background: #e2e8f0;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--color-border);
+}
+
+.sheet-toggle button {
+  border: 0;
+  background: transparent;
+  color: var(--color-text-muted);
+  border-radius: var(--radius-sm);
+  padding: 8px 16px;
+  font-size: 12.5px;
+  font-weight: 700;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  transition: all var(--transition-fast);
+}
+
+.sheet-toggle button:hover {
+  color: var(--color-text);
+}
+
+.sheet-toggle button.active {
+  background: var(--color-surface);
+  color: var(--color-primary);
+  box-shadow: 0 2px 6px rgba(15, 23, 42, 0.1);
+}
+
+/* Filter search box */
+.sheet-filter {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+
+.sheet-filter input {
+  height: 38px;
+  padding: 0 12px 0 34px;
+  border: 1px solid var(--color-border-strong);
+  border-radius: var(--radius-sm);
+  font-size: 13px;
+  background: var(--color-bg);
+  color: var(--color-text);
+  width: 200px;
+  transition: all var(--transition-fast);
+}
+
+.sheet-filter input:focus {
+  width: 240px;
+  background: var(--color-surface);
+  border-color: var(--color-ring);
+  box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.15);
+  outline: 0;
+}
+
+.sheet-filter svg {
+  position: absolute;
+  left: 10px;
+  color: var(--color-text-muted);
+  pointer-events: none;
+}
+
+/* Context Badge Bar */
+.sheet-context-bar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  font-size: 12.5px;
+  color: var(--color-text-muted);
+  border-top: 1px solid var(--color-border-subtle);
+  padding-top: 12px;
+  flex-wrap: wrap;
+}
+
+.context-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-weight: 600;
+  color: var(--color-text-secondary);
+}
+
+.context-tag svg {
+  color: var(--color-secondary);
+}
+
+.context-hint {
+  margin-left: auto;
+  font-size: 11.5px;
+  color: var(--color-text-dim);
+  font-style: italic;
+}
+
+/* Timetable Container Card */
+.sheet-wrap {
+  margin-bottom: 28px;
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-card);
+  overflow: hidden;
+}
+
+.sheet-title-header {
+  background: #f8fafc;
+  border-bottom: 1px solid var(--color-border);
+  padding: 12px 18px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  border-left: 5px solid var(--color-secondary);
+}
+
+.sheet-title-text {
+  font-size: 15px;
+  font-weight: 800;
+  color: var(--color-text);
+  letter-spacing: -0.01em;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.sheet-title-badge {
+  font-size: 11px;
+  font-weight: 700;
+  background: var(--color-primary-light);
+  color: var(--color-secondary);
+  padding: 2px 8px;
+  border-radius: var(--radius-full);
+}
+
+.sheet-scroll {
+  overflow-x: auto;
+  width: 100%;
+}
+
+/* Timetable Table - Rock Solid CSS */
+.sheet-table {
+  table-layout: fixed;
+  min-width: 880px;
+  width: 100%;
+  border-collapse: collapse;
+  font-family: var(--font-sans);
+  margin: 0;
+}
+
+.sheet-table th,
+.sheet-table td {
+  padding: 0;
+  border: 1px solid #cbd5e1;
+  text-align: center;
+  vertical-align: middle;
+}
+
+/* Column Headers (Days) - NO STICKY TOP TO PREVENT ROW OVERLAP */
+.sheet-table thead th {
+  height: 42px;
+  background: #f1f5f9;
+  color: var(--color-text);
+  font-size: 12.5px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  border-bottom: 2px solid #94a3b8;
+}
+
+.sheet-table thead th:first-child {
+  width: 130px;
+  background: #e2e8f0;
+  color: var(--color-text-secondary);
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+.day-header-cell {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+}
+
+.day-abbr {
+  font-size: 10px;
+  font-weight: 800;
+  color: var(--color-secondary);
+  background: #dbeafe;
+  padding: 2px 6px;
+  border-radius: var(--radius-xs);
+}
+
+/* Row Headers (Time slots) */
+.sheet-table tbody th {
+  width: 130px;
+  height: 58px;
+  background: #f8fafc;
+  color: var(--color-text-secondary);
+  font-size: 12px;
+  font-weight: 700;
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  padding: 0 8px;
+}
+
+/* Cell content */
+.sheet-table td {
+  height: 58px;
+  background: #ffffff;
+  position: relative;
+  transition: background var(--transition-fast);
+}
+
+.sheet-table tr:hover td {
+  background: #fafcff;
+}
+
+/* Lesson Card */
+.sheet-lesson {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  align-items: center;
+  width: 100%;
+  height: 100%;
+  min-height: 58px;
+  padding: 6px 10px;
+  border: 0;
+  border-radius: 0;
+  text-align: center;
+  position: relative;
+  box-sizing: border-box;
+  transition: filter var(--transition-fast);
+}
+
+.sheet-lesson strong {
+  font-size: 12.5px;
+  font-weight: 700;
+  line-height: 1.3;
+  color: #ffffff;
+  display: block;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.4);
+}
+
+.sheet-lesson-details {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  margin-top: 3px;
+  font-size: 11px;
+  font-weight: 500;
+  color: rgba(255, 255, 255, 0.95);
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sheet-lesson-details svg {
+  flex-shrink: 0;
+  opacity: 0.85;
+}
+
+.sheet-lesson:hover {
+  filter: brightness(1.12);
+  z-index: 2;
+}
+
+.sheet-draggable {
+  cursor: grab;
+  touch-action: manipulation;
+}
+
+.sheet-draggable:active {
+  cursor: grabbing;
+}
+
+.sheet-locked {
+  cursor: pointer;
+}
+
+.sheet-locked-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.45);
+  border-radius: var(--radius-xs);
+  padding: 1px 4px;
+  color: #facc15;
+}
+
+.sheet-dragging {
+  opacity: 0.35;
+}
+
+/* Empty Cell Button */
+.sheet-empty {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  height: 100%;
+  min-height: 58px;
+  background: transparent;
+  color: #94a3b8;
+  font-size: 19px;
+  font-weight: 500;
+  border: 0;
+  border-radius: 0;
+  transition: all var(--transition-fast);
+}
+
+.sheet-empty:hover,
+.sheet-empty:focus-visible {
+  background: #eff6ff;
+  color: var(--color-secondary);
+}
+
+.sheet-dash {
+  color: #cbd5e1;
+  font-size: 14px;
+}
+
+/* Drop Hover State */
+.sheet-table td.sheet-drop-hover {
+  background: #dbeafe !important;
+  outline: 2px dashed var(--color-secondary);
+  outline-offset: -2px;
+}
+
+.sheet-table td.sheet-drop-hover .sheet-empty {
+  background: #dbeafe;
+  color: var(--color-secondary-hover);
+}
+
+/* Modals for Grid */
+.grid-modal {
+  width: min(100%, 700px);
+}
+
+.grid-modal .form-field textarea {
+  width: 100%;
+  min-height: 110px;
+  border: 1px solid var(--color-border-strong);
+  border-radius: var(--radius-sm);
+  padding: 10px 12px;
+  font-size: 13.5px;
+  line-height: 1.5;
+  resize: vertical;
+}
+
+.grid-modal .form-field textarea.paste-area {
+  min-height: 180px;
+  font-family: var(--font-mono);
+  font-size: 12.5px;
+  background: #f8fafc;
+}
+
+.grid-weekdays {
+  margin-top: 20px;
+  background: var(--color-bg);
+  padding: 14px 18px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--color-border);
+}
+
+.grid-weekdays-title {
+  font-size: 12.5px;
+  font-weight: 700;
+  color: var(--color-text-secondary);
+  margin-bottom: 10px;
+}
+
+.grid-weekdays-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 14px;
+}
+
+.grid-weekdays label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--color-text);
+  cursor: pointer;
+}
+
+.grid-weekdays input[type="checkbox"] {
+  width: 16px;
+  height: 16px;
+  accent-color: var(--color-secondary);
+  cursor: pointer;
+}
+
+.sheet-helper {
+  font-size: 12.5px;
+  line-height: 1.5;
+  color: var(--color-text-muted);
+  margin: 16px 0 0;
+  background: #f8fafc;
+  padding: 10px 14px;
+  border-radius: var(--radius-sm);
+  border-left: 3px solid var(--color-secondary);
+}
+
+.grid-modal .modal-actions .danger {
+  margin-right: auto;
+}
+
+/* Responsive adjustments */
+@media (max-width: 1024px) {
+  .grid-metrics {
+    grid-template-columns: repeat(2, 1fr);
+  }
+}
+
+@media (max-width: 768px) {
+  .grid-metrics {
+    grid-template-columns: 1fr;
+  }
+
+  .sheet-toolbar-top {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .sheet-selector {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .sheet-selector select {
+    min-width: 0;
+    width: 100%;
+  }
+
+  .sheet-tools {
+    justify-content: space-between;
+  }
+
+  .sheet-filter input {
+    width: 100%;
+  }
+
+  .sheet-filter input:focus {
+    width: 100%;
+  }
+
+  .sheet-table tbody th {
+    position: sticky;
+    left: 0;
+    z-index: 2;
+  }
+}
