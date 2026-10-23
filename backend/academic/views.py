@@ -570,7 +570,9 @@ class ScheduleViewSet(AcademicViewSet):
             "slots": [{"id": slot.pk, "start": slot.starts_at.strftime("%H:%M"), "end": slot.ends_at.strftime("%H:%M")} for slot in schedule_slots],
             "sessions": [{"id": item.pk, "group_id": item.requirement.offering.group_id, "weekday": item.weekday,
                           "start": item.starts_at.strftime("%H:%M"), "end": item.ends_at.strftime("%H:%M"),
-                          "subject": item.requirement.offering.subject.name, "teacher": item.teacher.name, "room": item.room.code,
+                          "subject": item.requirement.offering.subject.name, "teacher": item.teacher.name,
+                          "room": item.room.name or item.room.code,
+                          "room_code": item.room.code,
                           "is_locked": item.is_locked}
                          for item in sessions],
         })

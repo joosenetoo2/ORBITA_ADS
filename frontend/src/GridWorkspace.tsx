@@ -24,11 +24,19 @@ import './grid.css';
 
 type Group = { id: number; code: string; name: string };
 type Slot = { id: number; start: string; end: string };
-type Session = { id: number; group_id: number; weekday: number; start: string; end: string; subject: string; teacher: string; room: string; is_locked?: boolean };
+type Session = { id: number; group_id: number; weekday: number; start: string; end: string; subject: string; teacher: string; room: string; room_code?: string; is_locked?: boolean };
 type Offering = { id: number; group_id: number; subject: string; onsite_weekly_hours: number; teachers: { id: number; name: string }[]; blocks: { duration_minutes: number; remaining: number }[] };
 type Grid = { id: number; revision: number; course: string; term: string; institution: string; time_profile: number | null; time_profile_name: string; weekdays: number[]; profiles_active: boolean; profile_slots_in_sync: boolean; available_slot_ids_by_day: Record<string, number[]>; groups: Group[]; offerings: Offering[]; slots: Slot[]; sessions: Session[] };
 type ProfileStructure = { profiles: { id: number; name: string; windows: { weekday: number; start: string; end: string }[] }[]; weekdays: number[]; slots: { start: string; end: string }[] };
 type Cell = { group_id: number; weekday: number; slot_id: number; span: number; subject: string; teacher: string; room: string; session_id?: number; is_locked?: boolean };
+
+function getRoomDisplayName(roomIdentifier: string, roomList: RecordItem[]) {
+  if (!roomIdentifier) return '';
+  const found = roomList.find(
+    (r) => r.name === roomIdentifier || r.code === roomIdentifier
+  );
+  return found ? String(found.name || found.code) : roomIdentifier;
+}
 
 const days = ['Segunda', 'Terça', 'Quarta', 'Quinta', 'Sexta', 'Sábado', 'Domingo'];
 const dayAbbrs = ['SEG', 'TER', 'QUA', 'QUI', 'SEX', 'SÁB', 'DOM'];
@@ -415,6 +423,12 @@ export default function GridWorkspace({ onSetup, onOpenOffers, onOpenTimeProfile
   function openCell(groupId: number, day: number, slot: Slot, session?: Session) {
     if (!grid) return;
     const span = session ? grid.slots.filter((item) => item.start >= session.start && item.end <= session.end).length : 1;
+    let roomValue = '';
+    if (session) {
+      roomValue = getRoomDisplayName(session.room, rooms);
+    } else if (rooms.length === 1) {
+      roomValue = String(rooms[0].name || rooms[0].code);
+    }
     setEditor(session ? {
       group_id: groupId,
       weekday: day,
@@ -422,10 +436,10 @@ export default function GridWorkspace({ onSetup, onOpenOffers, onOpenTimeProfile
       span,
       subject: session.subject,
       teacher: session.teacher,
-      room: session.room,
+      room: roomValue,
       session_id: session.id,
       is_locked: session.is_locked ?? false
-    } : { ...blankCell(groupId, day, slot.id), is_locked: false });
+    } : { ...blankCell(groupId, day, slot.id), room: roomValue, is_locked: false });
     setError('');
   }
 
@@ -651,14 +665,14 @@ export default function GridWorkspace({ onSetup, onOpenOffers, onOpenTimeProfile
                                   <User size={12} />
                                   <span>{session.teacher}</span>
                                   <DoorOpen size={12} style={{ marginLeft: 4 }} />
-                                  <span>{session.room}</span>
+                                  <span>{getRoomDisplayName(session.room, rooms)}</span>
                                 </>
                               ) : (
                                 <>
                                   <Users size={12} />
                                   <span>{group?.name || group?.code}</span>
                                   <DoorOpen size={12} style={{ marginLeft: 4 }} />
-                                  <span>{session.room}</span>
+                                  <span>{getRoomDisplayName(session.room, rooms)}</span>
                                 </>
                               )}
                             </div>
@@ -1190,18 +1204,35 @@ export default function GridWorkspace({ onSetup, onOpenOffers, onOpenTimeProfile
 
                 <label className="form-field">
                   Sala / Laboratório
-                  <input
-                    required
-                    list="grid-rooms"
-                    value={editor.room}
-                    onChange={(event) => setEditor({ ...editor, room: event.target.value })}
-                    placeholder="Ex: Lab 01, Sala 204"
-                  />
-                  <datalist id="grid-rooms">
-                    {rooms.map((item) => (
-                      <option key={item.id} value={String(item.code)} />
-                    ))}
-                  </datalist>
+                  {rooms.length > 0 ? (
+                    <select
+                      required
+                      value={getRoomDisplayName(editor.room, rooms)}
+                      onChange={(event) => setEditor({ ...editor, room: event.target.value })}
+                    >
+                      <option value="">Selecione uma sala ou laboratório…</option>
+                      {rooms.map((item) => {
+                        const name = String(item.name || item.code);
+                        const code = String(item.code || '');
+                        const display = code && code !== name ? `${name} (${code})` : name;
+                        return (
+                          <option key={item.id} value={name}>
+                            {display}
+                          </option>
+                        );
+                      })}
+                      {editor.room && !rooms.some((r) => r.name === editor.room || r.code === editor.room) && (
+                        <option value={editor.room}>{editor.room}</option>
+                      )}
+                    </select>
+                  ) : (
+                    <input
+                      required
+                      value={editor.room}
+                      onChange={(event) => setEditor({ ...editor, room: event.target.value })}
+                      placeholder="Ex: Lab 01, Sala 204"
+                    />
+                  )}
                 </label>
 
                 <label className="form-field wide">

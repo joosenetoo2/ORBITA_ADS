@@ -70,21 +70,32 @@ def by_name(model, institution, name, *, create=False):
 
 
 def room_by_code(institution, code):
-    code = str(code or "").strip()
-    if not code:
+    raw = str(code or "").strip()
+    if not raw:
         raise ValidationError({"room": "Informe a sala."})
-    if len(code) > 30:
-        raise ValidationError({"room": "O código da sala deve ter até 30 caracteres."})
-    room = models.Room.objects.filter(institution=institution, code__iexact=code).first()
-    if not room:
-        target_key = normalize_text_key(code)
-        candidates = [
-            r for r in models.Room.objects.filter(institution=institution)
-            if normalize_text_key(r.code) == target_key or normalize_text_key(r.name) == target_key
-        ]
-        if candidates:
-            return candidates[0]
-    return room or models.Room.objects.create(institution=institution, code=code, name=code)
+
+    # 1. Tentar localizar por nome da sala (case-insensitive)
+    room = models.Room.objects.filter(institution=institution, name__iexact=raw).first()
+    if room:
+        return room
+
+    # 2. Tentar localizar por código da sala (case-insensitive)
+    room = models.Room.objects.filter(institution=institution, code__iexact=raw).first()
+    if room:
+        return room
+
+    # 3. Tentar localizar por chave normalizada (sem acentos e minúsculo)
+    target_key = normalize_text_key(raw)
+    candidates = [
+        r for r in models.Room.objects.filter(institution=institution)
+        if normalize_text_key(r.name) == target_key or normalize_text_key(r.code) == target_key
+    ]
+    if candidates:
+        return candidates[0]
+
+    # 4. Se não existir, cria com código seguro (até 30 caracteres) e nome legível
+    safe_code = raw[:30].strip()
+    return models.Room.objects.create(institution=institution, code=safe_code, name=raw[:120])
 
 
 def reconcile(requirement):
