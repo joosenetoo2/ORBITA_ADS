@@ -509,9 +509,61 @@
   outline-offset: -2px;
 }
 
+.sheet-table td.sheet-drop-invalid {
+  background: #fee2e2 !important;
+  outline: 2px dashed #ef4444;
+  outline-offset: -2px;
+}
+
 .sheet-table td.sheet-drop-hover .sheet-empty {
   background: #dbeafe;
   color: var(--color-secondary-hover);
+}
+
+.sheet-table td.sheet-drop-invalid .sheet-empty {
+  background: #fee2e2;
+  color: #ef4444;
+}
+
+@keyframes toastSlideIn {
+  from {
+    transform: translateY(-20px);
+    opacity: 0;
+  }
+  to {
+    transform: translateY(0);
+    opacity: 1;
+  }
+}
+
+.grid-floating-toast {
+  position: fixed;
+  top: 24px;
+  right: 24px;
+  z-index: 99999;
+  max-width: 480px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 14px 18px;
+  border-radius: 10px;
+  box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.45), 0 8px 10px -6px rgba(0, 0, 0, 0.35);
+  font-size: 14px;
+  font-weight: 500;
+  line-height: 1.4;
+  animation: toastSlideIn 0.25s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.grid-floating-toast.toast-error {
+  background-color: #991b1b;
+  color: #ffffff;
+  border: 1px solid #ef4444;
+}
+
+.grid-floating-toast.toast-success {
+  background-color: #065f46;
+  color: #ffffff;
+  border: 1px solid #10b981;
 }
 
 /* Modals for Grid */

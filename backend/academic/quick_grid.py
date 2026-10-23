@@ -129,8 +129,8 @@ def save_cell(schedule, data):
     slots = list(schedule.slots.order_by("display_order", "starts_at"))
     start_index = next(index for index, slot in enumerate(slots) if slot.pk == start_slot.pk)
     chosen = slots[start_index:start_index + span]
-    if len(chosen) != span or any(a.ends_at != b.starts_at for a, b in zip(chosen, chosen[1:])):
-        raise ValidationError({"span": "A aula deve ocupar faixas consecutivas, sem intervalo."})
+    if len(chosen) != span:
+        raise ValidationError({"span": "Não há faixas de horário suficientes na grade a partir deste horário."})
     duration = (chosen[-1].ends_at.hour * 60 + chosen[-1].ends_at.minute) - (chosen[0].starts_at.hour * 60 + chosen[0].starts_at.minute)
     institution = schedule.course.institution
     existing = None
@@ -180,7 +180,7 @@ def save_cell(schedule, data):
             session.requirement.duration_minutes
             for session in models.ScheduledSession.objects.filter(requirement__offering=offering).select_related("requirement")
         )
-        if scheduled_minutes + duration > subject.onsite_weekly_hours * 60:
+        if scheduled_minutes + duration > (subject.onsite_weekly_hours * 60) + 15:
             raise ValidationError({"offering": f"Todas as {subject.onsite_weekly_hours}h presenciais semanais desta disciplina já foram alocadas."})
 
     requirement = models.SessionRequirement.objects.filter(offering=offering, duration_minutes=duration).first()

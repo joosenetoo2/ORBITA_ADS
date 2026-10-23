@@ -227,6 +227,17 @@ export default function GridWorkspace({ onSetup, onOpenOffers, onOpenTimeProfile
   const [profileWindows, setProfileWindows] = useState<RecordItem[]>([]);
   const hasProfileWindows = profileWindows.some((window) => window.is_active && Number(window.profile) === Number(profileId));
 
+  // Floating feedback toast
+  const [toast, setToast] = useState<{ message: string; type: 'error' | 'success'; id: number } | null>(null);
+
+  const showToast = useCallback((message: string, type: 'error' | 'success' = 'error') => {
+    const id = Date.now();
+    setToast({ message, type, id });
+    setTimeout(() => {
+      setToast((current) => (current?.id === id ? null : current));
+    }, 6000);
+  }, []);
+
   const loadSchedules = useCallback(async () => {
     const rows = await listAll<RecordItem>('schedules');
     setSchedules(rows);
@@ -279,24 +290,41 @@ export default function GridWorkspace({ onSetup, onOpenOffers, onOpenTimeProfile
     const originalSpan = original ? sessionSpan(original) : 0;
     const isSameEditingOffering = Boolean(original && original.subject === editor.subject);
 
-    const maxWeeklyHours = cellOffering.onsite_weekly_hours ?? 6;
+    // Horas totais semanais da disciplina (se não informado, padrão flexível de 4h)
+    const maxWeeklyHours = Math.max(1, cellOffering.onsite_weekly_hours ?? 4);
+
+    // Horas já alocadas na grade para esta mesma disciplina nesta turma (exceto a aula sendo editada)
     const allocatedSpans = grid.sessions
-      .filter((s) => s.group_id === editor.group_id && s.subject === editor.subject)
+      .filter((s) => s.group_id === editor.group_id && s.subject === editor.subject && s.id !== editor.session_id)
       .reduce((sum, s) => sum + sessionSpan(s), 0);
-    const effectiveRemainingHours = Math.max(0, maxWeeklyHours - allocatedSpans) + (isSameEditingOffering ? originalSpan : 0);
 
-    return grid.slots.slice(start).map((_, index) => {
-      const chosen = grid.slots.slice(start, start + index + 1);
-      const contiguous = chosen.every((slot, offset) => slotAllowed(editor.weekday, slot.id) && (!offset || chosen[offset - 1].end === slot.start));
-      const spanCount = index + 1;
+    const remainingHours = Math.max(0, maxWeeklyHours - allocatedSpans);
 
-      const fitsInSubject = spanCount <= maxWeeklyHours;
-      const fitsInRemaining = spanCount <= effectiveRemainingHours;
-      const isOriginal = Boolean(isSameEditingOffering && spanCount === originalSpan);
+    // Quantas faixas consecutivas existem a partir do horário inicial
+    const remainingSlotsCount = grid.slots.length - start;
+    const maxSpanPossible = Math.min(remainingSlotsCount, Math.min(maxWeeklyHours, 4));
 
-      const available = fitsInSubject && (fitsInRemaining || isOriginal);
-      return contiguous && available ? spanCount : 0;
-    }).filter(Boolean);
+    const validSpans: number[] = [];
+    for (let span = 1; span <= maxSpanPossible; span++) {
+      const chosen = grid.slots.slice(start, start + span);
+      if (chosen.length !== span) break;
+
+      const allAllowed = chosen.every((slot) => slotAllowed(editor.weekday, slot.id));
+      if (!allAllowed) break;
+
+      const fitsInRemaining = span <= remainingHours;
+      const isOriginal = isSameEditingOffering && span === originalSpan;
+
+      if (fitsInRemaining || isOriginal) {
+        validSpans.push(span);
+      }
+    }
+
+    if (!validSpans.length && remainingHours > 0 && remainingSlotsCount >= 1 && slotAllowed(editor.weekday, editor.slot_id)) {
+      validSpans.push(1);
+    }
+
+    return validSpans;
   }, [grid, editor, cellOffering]);
   useEffect(() => {
     if (editor && availableSpans.length && !availableSpans.includes(editor.span)) {
@@ -464,13 +492,32 @@ export default function GridWorkspace({ onSetup, onOpenOffers, onOpenTimeProfile
     return grid?.slots.filter((slot) => slot.start >= session.start && slot.end <= session.end).length ?? 1;
   }
 
-  function canDrop(session: Session, groupId: number, day: number, slotIndex: number) {
-    if (!grid || busy || session.group_id !== groupId || session.is_locked) return false;
+  function getDropBlockReason(session: Session, groupId: number, day: number, slotIndex: number): string | null {
+    if (!grid) return 'A grade não foi carregada.';
+    if (busy) return 'Aguarde a operação em andamento ser concluída.';
+    if (session.group_id !== groupId) return 'Não é possível mover aulas entre turmas diferentes pelo arraste.';
+    if (session.is_locked) return 'Esta aula está com horário bloqueado/fixo. Clique nela e desmarque o bloqueio para movê-la.';
     const span = sessionSpan(session);
     const chosen = grid.slots.slice(slotIndex, slotIndex + span);
-    if (chosen.length !== span || chosen.some((slot, index) => !slotAllowed(day, slot.id) || (index > 0 && chosen[index - 1].end !== slot.start))) return false;
+    if (chosen.length !== span) {
+      return `Espaço insuficiente: esta aula tem ${span} faixa(s) de duração e ultrapassa o término dos horários da grade.`;
+    }
+    const unallowedSlot = chosen.find((slot) => !slotAllowed(day, slot.id));
+    if (unallowedSlot) {
+      return `Horário indisponível: a faixa das ${unallowedSlot.start} não faz parte do turno desta turma na ${days[day - 1]}.`;
+    }
     const start = chosen[0].start, end = chosen[chosen.length - 1].end;
-    return !grid.sessions.some((item) => item.id !== session.id && item.group_id === groupId && item.weekday === day && item.start < end && start < item.end);
+    const overlap = grid.sessions.find(
+      (item) => item.id !== session.id && item.group_id === groupId && item.weekday === day && item.start < end && start < item.end
+    );
+    if (overlap) {
+      return `Conflito de turma: a turma já possui aula de "${overlap.subject}" neste mesmo horário (${overlap.start} às ${overlap.end}).`;
+    }
+    return null;
+  }
+
+  function canDrop(session: Session, groupId: number, day: number, slotIndex: number) {
+    return getDropBlockReason(session, groupId, day, slotIndex) === null;
   }
 
   function startDrag(event: DragEvent<HTMLButtonElement>, session: Session) {
@@ -487,9 +534,18 @@ export default function GridWorkspace({ onSetup, onOpenOffers, onOpenTimeProfile
     const session = dragged ?? grid?.sessions.find((item) => item.id === Number(event.dataTransfer.getData('text/plain')));
     setDragged(null);
     setDragHover('');
-    if (!session || !grid || !canDrop(session, groupId, day, slotIndex)) return;
+    if (!session || !grid) return;
+
+    const blockReason = getDropBlockReason(session, groupId, day, slotIndex);
+    if (blockReason) {
+      showToast(blockReason, 'error');
+      setError(blockReason);
+      return;
+    }
+
     const slot = grid.slots[slotIndex];
     if (session.weekday === day && session.start === slot.start) return;
+
     setBusy(true);
     setError('');
     try {
@@ -508,9 +564,13 @@ export default function GridWorkspace({ onSetup, onOpenOffers, onOpenTimeProfile
         })
       });
       await loadGrid(grid.id);
-      setNotice(`Aula reposicionada para ${days[day - 1]}, às ${slot.start}.`);
+      const successMsg = `Aula de "${session.subject}" reposicionada para ${days[day - 1]}, às ${slot.start}.`;
+      showToast(successMsg, 'success');
+      setNotice(successMsg);
     } catch (reason) {
-      setError(`A aula permaneceu no horário original. ${errorText(reason)}`);
+      const errorMsg = `Não foi possível mover a aula: ${errorText(reason)}`;
+      showToast(errorMsg, 'error');
+      setError(errorMsg);
     } finally {
       setBusy(false);
     }
@@ -633,17 +693,16 @@ export default function GridWorkspace({ onSetup, onOpenOffers, onOpenTimeProfile
                       <td
                         key={day}
                         rowSpan={span}
-                        className={dragHover === hoverKey ? 'sheet-drop-hover' : ''}
+                        className={dragHover === hoverKey ? 'sheet-drop-hover' : dragHover === `${hoverKey}-invalid` ? 'sheet-drop-invalid' : ''}
                         onDragOver={isGroup ? (event) => {
-                          if (!session && dragged && canDrop(dragged, owner.id, day, rowIndex)) {
+                          if (dragged) {
                             event.preventDefault();
-                            event.dataTransfer.dropEffect = 'move';
-                            setDragHover((current) => current === hoverKey ? current : hoverKey);
-                          } else {
-                            setDragHover((current) => current ? '' : current);
+                            const can = !session && canDrop(dragged, owner.id, day, rowIndex);
+                            event.dataTransfer.dropEffect = can ? 'move' : 'none';
+                            setDragHover(can ? hoverKey : `${hoverKey}-invalid`);
                           }
                         } : undefined}
-                        onDrop={isGroup && !session ? (event) => {
+                        onDrop={isGroup ? (event) => {
                           void dropLesson(event, owner.id, day, rowIndex);
                         } : undefined}
                       >
@@ -1286,14 +1345,22 @@ export default function GridWorkspace({ onSetup, onOpenOffers, onOpenTimeProfile
               </p>
               {cellOffering && (
                 <p className="sheet-helper">
-                  Carga presencial: {cellOffering.onsite_weekly_hours}h semanais · Alocado nesta turma:{' '}
+                  Carga presencial: {cellOffering.onsite_weekly_hours ?? 'Livre'}h semanais · Alocado nesta turma:{' '}
                   {grid.sessions
-                    .filter((s) => s.group_id === editor.group_id && s.subject === editor.subject)
-                    .reduce((sum, s) => sum + sessionSpan(s), 0)}h de {cellOffering.onsite_weekly_hours}h
+                    .filter((s) => s.group_id === editor.group_id && s.subject === editor.subject && s.id !== editor.session_id)
+                    .reduce((sum, s) => sum + sessionSpan(s), 0)}h de {cellOffering.onsite_weekly_hours ?? 'Livre'}h
                 </p>
               )}
               {!cellOfferings.length && <p className="form-error">Esta turma ainda não tem disciplinas ofertadas. <button type="button" className="button small" onClick={() => { setEditor(null); onOpenOffers?.(); }}>Abrir ofertas</button></p>}
-              {cellOffering && !availableSpans.length && <p className="form-error">Não há bloco presencial disponível que caiba a partir desta faixa. Escolha outra faixa ou disciplina.</p>}
+              {cellOffering && !availableSpans.length && (
+                <p className="form-error">
+                  {grid.sessions
+                    .filter((s) => s.group_id === editor.group_id && s.subject === editor.subject && s.id !== editor.session_id)
+                    .reduce((sum, s) => sum + sessionSpan(s), 0) >= (cellOffering.onsite_weekly_hours ?? 4)
+                    ? `Todas as ${cellOffering.onsite_weekly_hours}h presenciais semanais desta disciplina já foram alocadas nesta turma.`
+                    : 'Não há faixas de horário contínuas disponíveis a partir deste horário para esta disciplina.'}
+                </p>
+              )}
 
               {error && (
                 <p className="form-error" role="alert">
@@ -1422,6 +1489,34 @@ export default function GridWorkspace({ onSetup, onOpenOffers, onOpenTimeProfile
               </div>
             </form>
           </section>
+        </div>
+      )}
+      {/* Floating Toast Notification for Drag & Drop and Instant Feedback */}
+      {toast && (
+        <div className={`grid-floating-toast toast-${toast.type}`} role="alert">
+          {toast.type === 'error' ? (
+            <CircleAlert size={20} style={{ flexShrink: 0, color: '#fca5a5' }} />
+          ) : (
+            <CheckCircle2 size={20} style={{ flexShrink: 0, color: '#6ee7b7' }} />
+          )}
+          <span style={{ flex: 1 }}>{toast.message}</span>
+          <button
+            type="button"
+            onClick={() => setToast(null)}
+            style={{
+              background: 'transparent',
+              border: 'none',
+              color: '#ffffff',
+              cursor: 'pointer',
+              padding: '2px',
+              display: 'flex',
+              alignItems: 'center',
+              opacity: 0.85,
+            }}
+            aria-label="Fechar notificação"
+          >
+            <X size={16} />
+          </button>
         </div>
       )}
     </div>

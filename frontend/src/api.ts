@@ -26,7 +26,22 @@ export async function api<T>(path: string, init: RequestInit = {}): Promise<T> {
       const session = await fetch('/api/v1/auth/session/', { credentials: 'same-origin', cache: 'no-store' }).then((result) => result.json()).catch(() => null);
       if (session?.authenticated === false) window.dispatchEvent(new Event('orbita:auth-expired'));
     }
-    const detail = body.detail ?? body.message ?? Object.entries(body).map(([key, value]) => `${key}: ${JSON.stringify(value)}`).join(' · ');
+    let detail = '';
+    if (body.detail) {
+      detail = String(body.detail);
+    } else if (body.message) {
+      detail = String(body.message);
+    } else if (Array.isArray(body.conflicts) && body.conflicts.length) {
+      detail = body.conflicts.map((c: { message?: string; code?: string }) => c.message || c.code).join(' · ');
+    } else {
+      detail = Object.entries(body)
+        .map(([key, value]) => {
+          if (Array.isArray(value)) return `${value.join(', ')}`;
+          if (typeof value === 'object' && value !== null) return `${key}: ${JSON.stringify(value)}`;
+          return `${value}`;
+        })
+        .join(' · ');
+    }
     throw new ApiError(detail || `Erro HTTP ${response.status}`, response.status, body);
   }
   if (response.status === 204) return undefined as T;
