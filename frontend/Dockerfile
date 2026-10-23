@@ -20,3 +20,4 @@ ENV BACKEND_HOST=backend:8000
 EXPOSE 80
 
 CMD ["nginx", "-g", "daemon off;"]
+

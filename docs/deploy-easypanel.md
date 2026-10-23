@@ -109,3 +109,4 @@ O Easypanel também suporta subir a stack inteira via Docker Compose:
    - `APP_URL`: seu domínio HTTPS (ex: `https://grade.meudominio.com.br`).
 5. Aponte o domínio no Easypanel para a porta 80 do serviço `frontend`.
 6. Clique em **Deploy**.
+

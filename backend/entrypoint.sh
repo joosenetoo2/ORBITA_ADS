@@ -9,3 +9,4 @@ python manage.py collectstatic --noinput 2>/dev/null || true
 
 echo "==> Iniciando aplicação..."
 exec "$@"
+
