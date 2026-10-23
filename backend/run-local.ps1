@@ -21,7 +21,7 @@ try {
     if ($CreateSuperuser) {
         & $pythonPath manage.py createsuperuser
     } else {
-        & $pythonPath manage.py runserver 127.0.0.1:8000 --noreload
+        & $pythonPath manage.py runserver 127.0.0.1:8000
     }
 } finally {
     Pop-Location

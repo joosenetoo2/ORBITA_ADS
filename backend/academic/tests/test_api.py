@@ -7,7 +7,7 @@ from rest_framework.test import APIClient
 from academic.models import (
     AcademicTerm, ClassGroup, Course, Institution, Room, Schedule,
     ScheduledSession, SessionRequirement, Subject, SubjectOffering, Teacher,
-    TimeWindow,
+    TimeProfile, TimeWindow,
 )
 
 
@@ -103,11 +103,40 @@ class ScheduleApiTests(TestCase):
         self.assertFalse(preview.data["valid"])
         self.assertEqual(ScheduledSession.objects.count(), 1)
 
+    def test_setup_morning_and_night_profiles_is_idempotent(self):
+        url = "/api/v1/time-profiles/setup-shifts/"
+        first = self.client.post(url, {"institution_id": self.institution.pk}, format="json")
+        self.assertEqual(first.status_code, 200, first.data)
+        self.assertEqual({item["name"] for item in first.data["profiles"]}, {"Manhã", "Noite"})
+        self.assertEqual(TimeProfile.objects.count(), 2)
+        self.assertEqual(TimeWindow.objects.filter(profile__isnull=False).count(), 10)
+        repeated = self.client.post(url, {"institution_id": self.institution.pk}, format="json")
+        self.assertEqual(repeated.status_code, 200, repeated.data)
+        self.assertEqual(TimeWindow.objects.filter(profile__isnull=False).count(), 10)
+
+    def test_api_rejects_less_than_eleven_hours_of_teacher_rest(self):
+        TimeWindow.objects.create(institution=self.institution, weekday=2, starts_at=time(8), ends_at=time(12))
+        path = f"/api/v1/schedules/{self.schedule.pk}/sessions/"
+        night = self.client.post(path, {**self.payload(start="20:10", end="21:50"), "weekday": 1}, format="json", HTTP_IF_MATCH="1")
+        self.assertEqual(night.status_code, 201, night.data)
+        morning = self.client.post(path, {**self.payload(occurrence=2, start="08:40", end="10:20"), "weekday": 2}, format="json", HTTP_IF_MATCH="2")
+        self.assertEqual(morning.status_code, 409, morning.data)
+        self.assertIn("TEACHER_MIN_REST", {item["code"] for item in morning.data["conflicts"]})
+        self.assertEqual(ScheduledSession.objects.count(), 1)
+        allowed = self.client.post(path, {**self.payload(occurrence=2, start="08:50", end="10:30"), "weekday": 2}, format="json", HTTP_IF_MATCH="2")
+        self.assertEqual(allowed.status_code, 201, allowed.data)
+
     def test_delete_resource_success(self):
         new_teacher = Teacher.objects.create(institution=self.institution, code="TEMP", name="Professor Temporário")
         response = self.client.delete(f"/api/v1/teachers/{new_teacher.pk}/")
         self.assertEqual(response.status_code, 204)
         self.assertFalse(Teacher.objects.filter(pk=new_teacher.pk).exists())
+
+    def test_delete_unlinked_subject_success(self):
+        subject = Subject.objects.create(institution=self.institution, code="TEMP", name="Temporária")
+        response = self.client.delete(f"/api/v1/subjects/{subject.pk}/")
+        self.assertEqual(response.status_code, 204, response.data)
+        self.assertFalse(Subject.objects.filter(pk=subject.pk).exists())
 
     def test_delete_protected_resource_fails_gracefully(self):
         # Subject is linked to an existing offering

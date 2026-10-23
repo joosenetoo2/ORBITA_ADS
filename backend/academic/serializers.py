@@ -63,6 +63,8 @@ AcademicTermSerializer = serializer_for(models.AcademicTerm)
 CourseSerializer = serializer_for(models.Course)
 class SubjectSerializer(CleanModelSerializer):
     def validate(self, attrs):
+        if "ead_percentage" in self.initial_data:
+            raise serializers.ValidationError({"ead_weekly_hours": "Informe horas EAD semanais, não percentual."})
         if "credits" in attrs and attrs["credits"] is not None:
             attrs["total_workload"] = attrs["credits"] * 20
         attrs["workload_unit"] = models.Subject.Unit.CLASS_HOUR

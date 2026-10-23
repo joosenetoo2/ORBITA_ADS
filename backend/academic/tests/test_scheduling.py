@@ -40,8 +40,8 @@ class AllocationValidationTests(TestCase):
         self.schedule = Schedule.objects.create(course=self.course, term=self.term)
         TimeWindow.objects.create(institution=self.institution, weekday=1, starts_at=time(18), ends_at=time(22))
 
-    def session(self, occurrence, start, end, room=None):
-        return ScheduledSession.objects.create(schedule=self.schedule, requirement=self.requirement, occurrence=occurrence, weekday=1, starts_at=start, ends_at=end, teacher=self.teacher, room=room or self.room)
+    def session(self, occurrence, start, end, room=None, weekday=1):
+        return ScheduledSession.objects.create(schedule=self.schedule, requirement=self.requirement, occurrence=occurrence, weekday=weekday, starts_at=start, ends_at=end, teacher=self.teacher, room=room or self.room)
 
     def test_teacher_and_room_conflicts_are_reported(self):
         self.session(1, time(19), time(20, 40))
@@ -70,4 +70,21 @@ class AllocationValidationTests(TestCase):
         self.session(1, time(18), time(19, 40))
         second = self.session(2, time(20), time(21, 40))
         self.assertIn("TEACHER_WEEKLY_LIMIT", {conflict["code"] for conflict in validate_session(second)})
+
+    def test_teacher_needs_eleven_hours_between_night_and_next_morning(self):
+        TimeWindow.objects.create(institution=self.institution, weekday=2, starts_at=time(8), ends_at=time(12))
+        night = self.session(1, time(20, 10), time(21, 50))
+        too_early = self.session(2, time(8, 40), time(10, 20), weekday=2)
+        self.assertIn("TEACHER_MIN_REST", {item["code"] for item in validate_session(too_early)})
+        self.assertIn("TEACHER_MIN_REST", {item["code"] for item in validate_session(night)})
+        too_early.starts_at, too_early.ends_at = time(8, 50), time(10, 30)
+        too_early.save(update_fields=["starts_at", "ends_at"])
+        self.assertNotIn("TEACHER_MIN_REST", {item["code"] for item in validate_session(too_early)})
+
+    def test_teacher_rest_wraps_sunday_to_monday(self):
+        TimeWindow.objects.create(institution=self.institution, weekday=7, starts_at=time(20), ends_at=time(22))
+        sunday = self.session(1, time(20, 10), time(21, 50), weekday=7)
+        monday = self.session(2, time(8), time(9, 40))
+        self.assertIn("TEACHER_MIN_REST", {item["code"] for item in validate_session(monday)})
+        self.assertIn("TEACHER_MIN_REST", {item["code"] for item in validate_session(sunday)})
 

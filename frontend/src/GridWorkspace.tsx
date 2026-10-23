@@ -25,7 +25,8 @@ import './grid.css';
 type Group = { id: number; code: string; name: string };
 type Slot = { id: number; start: string; end: string };
 type Session = { id: number; group_id: number; weekday: number; start: string; end: string; subject: string; teacher: string; room: string; is_locked?: boolean };
-type Grid = { id: number; revision: number; course: string; term: string; institution: string; weekdays: number[]; groups: Group[]; slots: Slot[]; sessions: Session[] };
+type Offering = { id: number; group_id: number; subject: string; onsite_weekly_hours: number; teachers: { id: number; name: string }[]; blocks: { duration_minutes: number; remaining: number }[] };
+type Grid = { id: number; revision: number; course: string; term: string; institution: string; weekdays: number[]; groups: Group[]; offerings: Offering[]; slots: Slot[]; sessions: Session[] };
 type Cell = { group_id: number; weekday: number; slot_id: number; span: number; subject: string; teacher: string; room: string; session_id?: number; is_locked?: boolean };
 
 const days = ['Segunda', 'Terça', 'Quarta', 'Quinta', 'Sexta', 'Sábado', 'Domingo'];
@@ -47,6 +48,16 @@ function paletteFor(value: string) {
   let hash = 0;
   for (const char of value) hash = (hash * 31 + char.charCodeAt(0)) >>> 0;
   return paletteList[hash % paletteList.length];
+}
+
+function lessonMinutes(session: Session) {
+  const [startHour, startMinute] = session.start.split(':').map(Number);
+  const [endHour, endMinute] = session.end.split(':').map(Number);
+  return (endHour - startHour) * 60 + endMinute - startMinute;
+}
+
+function lessonCount(sessions: Session[]) {
+  return new Intl.NumberFormat('pt-BR', { maximumFractionDigits: 2 }).format(sessions.reduce((total, session) => total + lessonMinutes(session), 0) / 60);
 }
 
 const blankCell = (group_id: number, weekday: number, slot_id: number): Cell => ({
@@ -162,7 +173,7 @@ function parseLesson(value: string) {
   throw new Error(`Formato da célula não reconhecido: "${value.slice(0, 50)}". Informe:\nLinha 1: Disciplina\nLinha 2: Professor - Sala`);
 }
 
-export default function GridWorkspace({ onSetup }: { onSetup?: () => void }) {
+export default function GridWorkspace({ onSetup, onOpenOffers, initialScheduleId }: { onSetup?: () => void; onOpenOffers?: () => void; initialScheduleId?: number | null }) {
   const [schedules, setSchedules] = useState<RecordItem[]>([]);
   const [scheduleId, setScheduleId] = useState<number | null>(null);
   const [grid, setGrid] = useState<Grid | null>(null);
@@ -194,17 +205,13 @@ export default function GridWorkspace({ onSetup }: { onSetup?: () => void }) {
   const [pasteGroup, setPasteGroup] = useState(0);
   const [pasteDay, setPasteDay] = useState(1);
   const [pasteSlot, setPasteSlot] = useState(0);
-  const [choices, setChoices] = useState<{ subjects: RecordItem[]; teachers: RecordItem[]; rooms: RecordItem[] }>({
-    subjects: [],
-    teachers: [],
-    rooms: []
-  });
+  const [rooms, setRooms] = useState<RecordItem[]>([]);
 
   const loadSchedules = useCallback(async () => {
     const rows = await listAll<RecordItem>('schedules');
     setSchedules(rows);
-    setScheduleId((current) => current && rows.some((row) => row.id === current) ? current : rows[0]?.id ?? null);
-  }, []);
+    setScheduleId((current) => current && rows.some((row) => row.id === current) ? current : initialScheduleId && rows.some((row) => row.id === initialScheduleId) ? initialScheduleId : rows[0]?.id ?? null);
+  }, [initialScheduleId]);
 
   const loadGrid = useCallback(async (id: number) => {
     setGrid(await api<Grid>(`schedules/${id}/grid/`));
@@ -215,8 +222,8 @@ export default function GridWorkspace({ onSetup }: { onSetup?: () => void }) {
   }, [loadSchedules]);
 
   useEffect(() => {
-    void Promise.all([listAll('subjects'), listAll('teachers'), listAll('rooms')])
-      .then(([subjects, teachers, rooms]) => setChoices({ subjects, teachers, rooms }))
+    void listAll('rooms')
+      .then(setRooms)
       .catch(() => undefined);
   }, []);
 
@@ -233,6 +240,29 @@ export default function GridWorkspace({ onSetup }: { onSetup?: () => void }) {
   const teachers = useMemo(() => {
     return grid ? [...new Set(grid.sessions.map((item) => item.teacher))].sort((a, b) => a.localeCompare(b, 'pt-BR')) : [];
   }, [grid]);
+  const cellOfferings = grid?.offerings.filter((item) => item.group_id === editor?.group_id) ?? [];
+  const cellOffering = cellOfferings.find((item) => item.subject === editor?.subject);
+  const cellTeachers = cellOffering?.teachers ?? [];
+  const availableSpans = useMemo(() => {
+    if (!grid || !editor || !cellOffering) return [];
+    const start = grid.slots.findIndex((slot) => slot.id === editor.slot_id);
+    if (start < 0) return [];
+    return grid.slots.slice(start).map((_, index) => {
+      const chosen = grid.slots.slice(start, start + index + 1);
+      const contiguous = chosen.every((slot, offset) => !offset || chosen[offset - 1].end === slot.start);
+      const [beginHour, beginMinute] = chosen[0].start.split(':').map(Number);
+      const [endHour, endMinute] = chosen[chosen.length - 1].end.split(':').map(Number);
+      const minutes = endHour * 60 + endMinute - beginHour * 60 - beginMinute;
+      const original = grid.sessions.find((session) => session.id === editor.session_id);
+      const available = cellOffering.blocks.some((block) => block.duration_minutes === minutes && (block.remaining > 0 || Boolean(original?.subject === editor.subject && editor.span === index + 1)));
+      return contiguous && available ? index + 1 : 0;
+    }).filter(Boolean);
+  }, [grid, editor, cellOffering]);
+  useEffect(() => {
+    if (editor && availableSpans.length && !availableSpans.includes(editor.span)) {
+      setEditor((current) => current && current.subject === editor.subject && current.slot_id === editor.slot_id ? { ...current, span: availableSpans[0] } : current);
+    }
+  }, [editor, availableSpans]);
 
   // Filtered lists for search (accent-insensitive & case-insensitive)
   const visibleGroups = useMemo(() => {
@@ -489,6 +519,9 @@ export default function GridWorkspace({ onSetup }: { onSetup?: () => void }) {
     if (!grid) return null;
     const isGroup = typeof owner !== 'string';
     const ownerTitle = isGroup ? (owner.name || owner.code) : owner;
+    const ownerSessions = grid.sessions.filter((session) => isGroup ? session.group_id === owner.id : session.teacher === owner);
+    const subjectCount = new Set(ownerSessions.map((session) => session.subject)).size;
+    const hours = lessonCount(ownerSessions);
 
     return (
       <div className="sheet-wrap" key={isGroup ? owner.id : owner}>
@@ -501,7 +534,7 @@ export default function GridWorkspace({ onSetup }: { onSetup?: () => void }) {
             </span>
           </div>
           <span className="text-muted" style={{ fontSize: '12px' }}>
-            {grid.sessions.filter((s) => isGroup ? s.group_id === owner.id : s.teacher === owner).length} aula(s)
+            {subjectCount} disciplina(s) · {ownerSessions.length} bloco(s) · {hours} aula(s) / {hours} h presenciais
           </span>
         </div>
 
@@ -677,13 +710,13 @@ export default function GridWorkspace({ onSetup }: { onSetup?: () => void }) {
           </div>
           <h2>Crie sua primeira grade de aulas</h2>
           <p>
-            Defina o curso, o período letivo, as turmas e as faixas de horário. Os cadastros de disciplinas, professores e salas
-            são preenchidos de forma fluida e automática ao compor as células da grade.
+            Cadastre a turma, oferte as disciplinas com seus professores e depois monte os horários na grade.
           </p>
           <button className="button primary" onClick={() => setSetup(true)}>
             <Plus size={18} />
             Criar grade agora
           </button>
+          <button className="button" onClick={onOpenOffers}>Preparar ofertas de disciplinas</button>
         </section>
       ) : (
         <>
@@ -694,8 +727,8 @@ export default function GridWorkspace({ onSetup }: { onSetup?: () => void }) {
                 <BookOpen size={20} />
               </div>
               <div className="metric-data">
-                <span className="metric-value">{grid.sessions.length}</span>
-                <span className="metric-label">Aulas Alocadas</span>
+                <span className="metric-value">{lessonCount(grid.sessions)}</span>
+                <span className="metric-label">Aulas presenciais · {grid.sessions.length} blocos</span>
               </div>
             </div>
 
@@ -731,6 +764,7 @@ export default function GridWorkspace({ onSetup }: { onSetup?: () => void }) {
           </div>
 
           {/* Timetable Toolbar Card */}
+          <div className="catalog-hint-banner">Na grade, apenas disciplinas ofertadas para cada turma e seus professores vinculados podem ser alocados. <button type="button" className="button small" onClick={onOpenOffers}>Preparar ofertas</button></div>
           <div className="sheet-toolbar-card">
             <div className="sheet-toolbar-top">
               <div className="sheet-selector">
@@ -1116,35 +1150,18 @@ export default function GridWorkspace({ onSetup }: { onSetup?: () => void }) {
 
                 <label className="form-field wide">
                   Disciplina
-                  <input
-                    required
-                    autoFocus
-                    list="grid-subjects"
-                    value={editor.subject}
-                    onChange={(event) => setEditor({ ...editor, subject: event.target.value })}
-                    placeholder="Selecione ou digite o nome da disciplina"
-                  />
-                  <datalist id="grid-subjects">
-                    {choices.subjects.map((item) => (
-                      <option key={item.id} value={String(item.name)} />
-                    ))}
-                  </datalist>
+                  <select required autoFocus value={editor.subject} onChange={(event) => setEditor({ ...editor, subject: event.target.value, teacher: '' })}>
+                    <option value="">Selecione uma disciplina ofertada…</option>
+                    {cellOfferings.map((item) => <option key={item.id} value={item.subject}>{item.subject} · {item.onsite_weekly_hours} h presenciais/semana</option>)}
+                  </select>
                 </label>
 
                 <label className="form-field">
                   Professor(a)
-                  <input
-                    required
-                    list="grid-teachers"
-                    value={editor.teacher}
-                    onChange={(event) => setEditor({ ...editor, teacher: event.target.value })}
-                    placeholder="Nome do docente"
-                  />
-                  <datalist id="grid-teachers">
-                    {choices.teachers.map((item) => (
-                      <option key={item.id} value={String(item.name)} />
-                    ))}
-                  </datalist>
+                  <select required value={editor.teacher} disabled={!editor.subject} onChange={(event) => setEditor({ ...editor, teacher: event.target.value })}>
+                    <option value="">Selecione o professor vinculado…</option>
+                    {cellTeachers.map((item) => <option key={item.id} value={item.name}>{item.name}</option>)}
+                  </select>
                 </label>
 
                 <label className="form-field">
@@ -1157,7 +1174,7 @@ export default function GridWorkspace({ onSetup }: { onSetup?: () => void }) {
                     placeholder="Ex: Lab 01, Sala 204"
                   />
                   <datalist id="grid-rooms">
-                    {choices.rooms.map((item) => (
+                    {rooms.map((item) => (
                       <option key={item.id} value={String(item.code)} />
                     ))}
                   </datalist>
@@ -1169,9 +1186,9 @@ export default function GridWorkspace({ onSetup }: { onSetup?: () => void }) {
                     value={editor.span}
                     onChange={(event) => setEditor({ ...editor, span: Number(event.target.value) })}
                   >
-                    {grid.slots.slice(grid.slots.findIndex((item) => item.id === editor.slot_id)).map((_, index) => (
-                      <option key={index} value={index + 1}>
-                        {index + 1} {index === 0 ? 'faixa horária' : 'faixas horárias consecutivas'}
+                    {availableSpans.map((span) => (
+                      <option key={span} value={span}>
+                        {span} {span === 1 ? 'faixa horária' : 'faixas horárias consecutivas'}
                       </option>
                     ))}
                   </select>
@@ -1193,8 +1210,10 @@ export default function GridWorkspace({ onSetup }: { onSetup?: () => void }) {
               </div>
 
               <p className="sheet-helper">
-                Você pode selecionar disciplinas, docentes e salas já existentes ou cadastrar novos termos diretamente ao salvar.
+                Escolha uma oferta da turma e um professor vinculado. A sala pode ser informada ao salvar.
               </p>
+              {!cellOfferings.length && <p className="form-error">Esta turma ainda não tem disciplinas ofertadas. <button type="button" className="button small" onClick={() => { setEditor(null); onOpenOffers?.(); }}>Abrir ofertas</button></p>}
+              {cellOffering && !availableSpans.length && <p className="form-error">Não há bloco presencial disponível que caiba a partir desta faixa. Escolha outra faixa ou disciplina.</p>}
 
               {error && (
                 <p className="form-error" role="alert">
@@ -1218,7 +1237,7 @@ export default function GridWorkspace({ onSetup }: { onSetup?: () => void }) {
                 <button className="button ghost" type="button" onClick={() => setEditor(null)}>
                   Cancelar
                 </button>
-                <button className="button primary" disabled={busy}>
+                <button className="button primary" disabled={busy || !cellOfferings.length || !availableSpans.length}>
                   {busy ? 'Salvando…' : 'Salvar aula'}
                 </button>
               </div>

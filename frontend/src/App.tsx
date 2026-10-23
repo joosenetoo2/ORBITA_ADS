@@ -23,9 +23,10 @@ import {
   Users,
   X
 } from 'lucide-react';
-import { create, listAll, remove, update, type RecordItem } from './api';
+import { api, create, listAll, remove, update, type RecordItem } from './api';
 import ScheduleEditor from './ScheduleEditor';
 import GridWorkspace from './GridWorkspace';
+import OfferPlanner from './OfferPlanner';
 import type { AuthUser } from './AuthGate';
 import { matchesSearch } from './textUtils';
 import { ImportModal, OfferModal, type ImportKind } from './CatalogActions';
@@ -42,7 +43,8 @@ type Resource =
   | 'subject-offerings'
   | 'session-requirements'
   | 'time-profiles'
-  | 'time-windows';
+  | 'time-windows'
+  | 'time-blocks';
 
 export type Data = Record<Resource, RecordItem[]>;
 
@@ -58,6 +60,7 @@ const emptyData: Data = {
   'session-requirements': [],
   'time-profiles': [],
   'time-windows': [],
+  'time-blocks': [],
 };
 
 const weekdayNames = ['', 'Segunda', 'Terça', 'Quarta', 'Quinta', 'Sexta', 'Sábado', 'Domingo'];
@@ -74,6 +77,7 @@ const resourceNames: Record<Resource, string> = {
   'session-requirements': 'Encontro requerido',
   'time-profiles': 'Perfil de horário',
   'time-windows': 'Janela de horário',
+  'time-blocks': 'Intervalo bloqueado',
 };
 
 const resourcePluralNames: Record<Resource, string> = {
@@ -88,6 +92,7 @@ const resourcePluralNames: Record<Resource, string> = {
   'session-requirements': 'Encontros requeridos',
   'time-profiles': 'Perfis de horários',
   'time-windows': 'Janelas de horários',
+  'time-blocks': 'Intervalos bloqueados',
 };
 
 const resourceAddLabels: Record<Resource, string> = {
@@ -102,6 +107,7 @@ const resourceAddLabels: Record<Resource, string> = {
   'session-requirements': 'Novo encontro requerido',
   'time-profiles': 'Novo perfil de horário',
   'time-windows': 'Nova janela de horário',
+  'time-blocks': 'Novo intervalo',
 };
 
 const labels: Record<string, string> = {
@@ -116,7 +122,7 @@ const labels: Record<string, string> = {
   total_workload: 'Carga horária total',
   credits: 'Créditos',
   onsite_weekly_hours: 'Horas presenciais por semana',
-  ead_percentage: 'Percentual EAD',
+  ead_weekly_hours: 'Horas EAD por semana',
   weekly_hours: 'Horas presenciais/semana',
   max_weekly_minutes: 'Limite semanal (minutos)',
   capacity: 'Capacidade',
@@ -138,6 +144,7 @@ const labels: Record<string, string> = {
   duration_minutes: 'Duração (minutos)',
   weekly_count: 'Encontros por semana',
   kind: 'Tipo de encontro',
+  reason: 'Motivo',
 };
 
 type Field = {
@@ -174,7 +181,7 @@ const fieldsets: Record<Resource, Field[]> = {
     { key: 'name', required: true },
     { key: 'credits', type: 'number', required: true },
     { key: 'onsite_weekly_hours', type: 'number', required: true },
-    { key: 'ead_percentage', type: 'number', required: true }
+    { key: 'ead_weekly_hours', type: 'number', required: true }
   ],
   teachers: [
     { key: 'institution', source: 'institutions', required: true },
@@ -224,6 +231,15 @@ const fieldsets: Record<Resource, Field[]> = {
     { key: 'starts_at', type: 'time', required: true },
     { key: 'ends_at', type: 'time', required: true }
   ],
+  'time-blocks': [
+    { key: 'institution', source: 'institutions', required: true },
+    { key: 'scope', options: [['INSTITUTION', 'Instituição'], ['COURSE', 'Curso'], ['GROUP', 'Turma'], ['TEACHER', 'Professor'], ['ROOM', 'Sala'], ['OFFERING', 'Oferta']], required: true },
+    { key: 'scope_id', scopeSource: true },
+    { key: 'weekday', options: weekdayNames.slice(1).map((name, index) => [String(index + 1), name]), required: true },
+    { key: 'starts_at', type: 'time', required: true },
+    { key: 'ends_at', type: 'time', required: true },
+    { key: 'reason', required: true },
+  ],
 };
 
 const immutableRelations: Partial<Record<Resource, string[]>> = {
@@ -237,6 +253,7 @@ const immutableRelations: Partial<Record<Resource, string[]>> = {
   'session-requirements': ['offering'],
   'time-profiles': ['institution'],
   'time-windows': ['institution'],
+  'time-blocks': ['institution'],
 };
 
 function displayName(item: RecordItem) {
@@ -250,6 +267,8 @@ function getResourceColumns(resource: Resource): string[] {
     ? ['code', 'name', 'capacity', 'location']
     : resource === 'time-windows'
     ? ['weekday', 'starts_at', 'ends_at']
+    : resource === 'time-blocks'
+    ? ['weekday', 'starts_at', 'ends_at', 'reason', 'scope']
     : resource === 'subject-offerings'
     ? ['group', 'subject', 'weekly_hours', 'eligible_teachers']
     : resource === 'session-requirements'
@@ -261,7 +280,7 @@ function getResourceColumns(resource: Resource): string[] {
     : resource === 'courses'
     ? ['code', 'name', 'modality']
     : resource === 'subjects'
-    ? ['code', 'name', 'credits', 'total_workload', 'onsite_weekly_hours', 'ead_percentage']
+    ? ['code', 'name', 'credits', 'total_workload', 'onsite_weekly_hours', 'ead_weekly_hours']
     : resource === 'teachers'
     ? ['code', 'name']
     : resource === 'class-groups'
@@ -273,7 +292,7 @@ function displayResourceValue(row: RecordItem, key: string, data: Data) {
   if (key === 'weekday') return weekdayNames[Number(row[key])];
   if (key === 'weekly_hours') return `${Number(row.weekly_minutes ?? 0) / 60} h`;
   if (key === 'total_workload') return `${String(row[key] ?? '—')} h`;
-  if (key === 'ead_percentage') return `${String(row[key] ?? 0)}%`;
+  if (key === 'ead_weekly_hours') return `${String(row[key] ?? 0)} h`;
   if (key === 'workload_unit') return row[key] === 'CLASS_HOUR' ? 'Hora-aula' : 'Hora-relógio';
   if (key === 'eligible_teachers' && Array.isArray(row[key])) {
     const teacherNames = (row[key] as number[]).map((id) => {
@@ -309,7 +328,7 @@ function getInitialValues(resource: Resource, item: RecordItem | null, data: Dat
       class_minutes: '60',
       slot_granularity_minutes: '10',
       workload_unit: 'CLASS_HOUR',
-      ead_percentage: '0',
+      ead_weekly_hours: '0',
       scope: 'INSTITUTION',
       institution: String(data.institutions[0]?.id ?? '')
     };
@@ -497,7 +516,7 @@ function Modal({
                       disabled={isImmutable}
                       type={field.type ?? 'text'}
                       min={field.type === 'number' ? 0 : undefined}
-                      max={field.key === 'ead_percentage' ? 100 : undefined}
+                      max={resource === 'subjects' && (field.key === 'onsite_weekly_hours' || field.key === 'ead_weekly_hours') && values.credits ? Number(values.credits) : undefined}
                       list={resource === 'class-groups' && field.key === 'name' ? 'group-name-options' : undefined}
                       value={values[field.key] ?? ''}
                       onChange={(event) => setValues({ ...values, [field.key]: event.target.value, ...(resource === 'subjects' && field.key === 'credits' && !values.onsite_weekly_hours ? { onsite_weekly_hours: event.target.value } : {}) })}
@@ -508,7 +527,7 @@ function Modal({
             })}
           </div>
           {resource === 'class-groups' && <datalist id="group-name-options">{Array.from({ length: 10 }, (_, index) => index + 1).flatMap((period) => ['A', 'B', 'C', 'D'].map((letter) => <option key={`${period}-${letter}`} value={`${period}º ${letter}`} />))}</datalist>}
-          {resource === 'subjects' && <p className="catalog-hint">Cada crédito corresponde a 1 hora-aula semanal de 60 minutos e a 20 horas-aula totais. Informe separadamente quantas horas semanais presenciais entram na grade; a parte EAD fica fora dela.</p>}
+          {resource === 'subjects' && <p className="catalog-hint">Cada crédito corresponde a 1 hora-aula semanal de 60 minutos e a 20 horas-aula totais. Exemplo: 4 créditos = 3 horas presenciais + 1 hora EAD por semana. Apenas as horas presenciais entram na grade.</p>}
 
           {error && (
             <p className="form-error" role="alert">
@@ -614,7 +633,7 @@ function ListPanel({
                     {labels[key] ?? key}
                   </th>
                 ))}
-                <th scope="col" style={{ width: '130px', textAlign: 'center' }}>
+                <th scope="col" className="row-actions-cell">
                   Ações
                 </th>
               </tr>
@@ -625,28 +644,26 @@ function ListPanel({
                   {columns.map((key) => (
                     <td key={key}>{displayResourceValue(row, key, data)}</td>
                   ))}
-                  <td style={{ textAlign: 'center', padding: '6px 12px' }}>
-                    <div style={{ display: 'inline-flex', alignItems: 'center', gap: '4px', justifyContent: 'center' }}>
+                  <td className="row-actions-cell">
+                    <div className="row-actions">
                       <button
-                        className="button small ghost"
-                        style={{ padding: '4px 8px', minHeight: '30px' }}
+                        className="button small ghost row-action"
                         onClick={() => onEdit(row)}
                         title={`Editar ${resourceNames[resource]}`}
                         aria-label={`Editar ${displayName(row)}`}
                       >
-                        <Pencil size={14} style={{ color: 'var(--color-secondary)' }} />
-                        <span style={{ fontSize: '11.5px', marginLeft: 4 }}>Editar</span>
+                        <Pencil size={14} />
+                        <span>Editar</span>
                       </button>
                       {resource !== 'institutions' && (
                         <button
-                          className="button small ghost"
-                          style={{ padding: '4px 8px', minHeight: '30px', color: 'var(--color-destructive)' }}
+                          className="button small danger ghost row-action"
                           onClick={() => onDelete?.(row)}
                           title={`Excluir ${resourceNames[resource]}`}
                           aria-label={`Excluir ${displayName(row)}`}
                         >
                           <Trash2 size={14} />
-                          <span style={{ fontSize: '11.5px', marginLeft: 4 }}>Excluir</span>
+                          <span>Excluir</span>
                         </button>
                       )}
                     </div>
@@ -680,6 +697,8 @@ export default function App({
   const [modalTarget, setModalTarget] = useState<{ resource: Resource; item: RecordItem | null; defaults?: Record<string, string> } | null>(null);
   const [mobileNav, setMobileNav] = useState(false);
   const [gridRefresh, setGridRefresh] = useState(0);
+  const [settingShifts, setSettingShifts] = useState(false);
+  const [preferredScheduleId, setPreferredScheduleId] = useState<number | null>(null);
   const [offerTarget, setOfferTarget] = useState<{ subjectId?: number; teacherId?: number; groupId?: number } | null>(null);
   const [importKind, setImportKind] = useState<ImportKind | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<{ resource: Resource; item: RecordItem } | null>(null);
@@ -690,8 +709,8 @@ export default function App({
   const [catalogTab, setCatalogTab] = useState<Resource>('subjects');
   const [catalogSearch, setCatalogSearch] = useState('');
 
-  const loadData = useCallback(async () => {
-    setLoading(true);
+  const loadData = useCallback(async (quiet = false) => {
+    if (!quiet) setLoading(true);
     setError('');
     try {
       const resources = Object.keys(emptyData) as Resource[];
@@ -727,6 +746,18 @@ export default function App({
   }, [loadData]);
 
   const institution = data.institutions[0];
+
+  async function setupShifts() {
+    if (!institution) return;
+    setSettingShifts(true);
+    setError('');
+    try {
+      await api('time-profiles/setup-shifts/', { method: 'POST', body: JSON.stringify({ institution_id: institution.id }) });
+      setNotice('Perfis Manhã e Noite ativos. As janelas padrão podem ser ajustadas abaixo; o descanso mínimo do professor é de 11 horas entre dias consecutivos.');
+      await loadData(true);
+    } catch (reason) { setError(reason instanceof Error ? reason.message : 'Não foi possível configurar os perfis.'); }
+    finally { setSettingShifts(false); }
+  }
 
   const nav = useMemo(
     () => [
@@ -919,7 +950,7 @@ export default function App({
           )}
 
           {section === 'grid' ? (
-            <GridWorkspace key={gridRefresh} onSetup={() => void loadData()} />
+            <GridWorkspace key={gridRefresh} initialScheduleId={preferredScheduleId} onSetup={() => void loadData()} onOpenOffers={() => { setCatalogTab('subject-offerings'); navigate('catalog'); }} />
           ) : loading ? (
             <div className="loading-state">
               <RefreshCw size={30} className="spinning" style={{ color: 'var(--color-secondary)' }} />
@@ -1122,12 +1153,14 @@ export default function App({
                       </div>
                     </div>
 
-                    {catalogTab === 'subject-offerings' && <div className="catalog-hint-banner">As horas presenciais semanais são definidas na disciplina. Ao ofertar, escolha turma e professor; os blocos para a grade são preparados automaticamente.</div>}
+                    {catalogTab === 'subject-offerings' && <div className="catalog-hint-banner">Cada turma recebe uma única oferta por disciplina. As horas presenciais semanais são definidas na disciplina; os blocos da grade são preparados na primeira oferta.</div>}
+
+                    {catalogTab === 'subject-offerings' && <OfferPlanner data={data} onSaved={async (message) => { setNotice(message); await loadData(true); }} onOpenGrid={(id) => { setPreferredScheduleId(id); setGridRefresh((value) => value + 1); navigate('grid'); }} />}
 
                     {/* Table View */}
-                    <div className="table-wrap" style={{ maxHeight: 'calc(100vh - 360px)', minHeight: '260px' }}>
+                    <div className="table-wrap catalog-table-wrap">
                       {filteredRows.length > 0 ? (
-                        <table>
+                        <table className={`catalog-table catalog-table--${activeResource}`}>
                           <thead>
                             <tr>
                               {getResourceColumns(activeResource).map((key) => (
@@ -1135,7 +1168,7 @@ export default function App({
                                   {labels[key] ?? key}
                                 </th>
                               ))}
-                              <th scope="col" style={{ width: '150px', textAlign: 'center' }}>
+                              <th scope="col" className="row-actions-cell">
                                 Ações
                               </th>
                             </tr>
@@ -1144,37 +1177,35 @@ export default function App({
                             {filteredRows.map((row) => (
                               <tr key={row.id}>
                                 {getResourceColumns(activeResource).map((key) => (
-                                  <td key={key}>{displayResourceValue(row, key, data)}</td>
+                                  <td key={key} data-label={labels[key] ?? key}>{displayResourceValue(row, key, data)}</td>
                                 ))}
-                                <td style={{ textAlign: 'center', padding: '6px 12px' }}>
-                                  <div style={{ display: 'inline-flex', alignItems: 'center', gap: '4px', flexWrap: 'wrap', justifyContent: 'center' }}>
+                                <td className="row-actions-cell" data-label="Ações">
+                                  <div className="row-actions">
                                     <button
-                                      className="button small ghost"
-                                      style={{ padding: '4px 8px', minHeight: '30px' }}
+                                      className="button small ghost row-action"
                                       onClick={() => openEditModal(activeResource, row)}
                                       title={`Editar ${resourceNames[activeResource]}`}
                                       aria-label={`Editar ${displayName(row)}`}
                                     >
-                                      <Pencil size={14} style={{ color: 'var(--color-secondary)' }} />
-                                      <span style={{ fontSize: '11.5px', marginLeft: 4 }}>Editar</span>
+                                      <Pencil size={14} />
+                                      <span>Editar</span>
                                     </button>
 
                                     {activeResource !== 'institutions' && (
                                       <button
-                                        className="button small ghost"
-                                        style={{ padding: '4px 8px', minHeight: '30px', color: 'var(--color-destructive)' }}
+                                        className="button small danger ghost row-action"
                                         onClick={() => { setDeleteError(''); setDeleteTarget({ resource: activeResource, item: row }); }}
                                         title={`Excluir ${resourceNames[activeResource]}`}
                                         aria-label={`Excluir ${displayName(row)}`}
                                       >
                                         <Trash2 size={14} />
-                                        <span style={{ fontSize: '11.5px', marginLeft: 4 }}>Excluir</span>
+                                        <span>Excluir</span>
                                       </button>
                                     )}
 
-                                    {activeResource === 'subjects' && <button className="button small" onClick={() => setOfferTarget({ subjectId: row.id })}>Ofertar · professor</button>}
-                                    {activeResource === 'teachers' && <button className="button small" onClick={() => setOfferTarget({ teacherId: row.id })}>Alocar a oferta</button>}
-                                    {activeResource === 'subject-offerings' && <button className="button small" onClick={() => setOfferTarget({ subjectId: Number(row.subject), groupId: Number(row.group) })}>Alocar professor</button>}
+                                    {activeResource === 'subjects' && <button className="button small row-action" onClick={() => setOfferTarget({ subjectId: row.id })} aria-label={`Ofertar ${displayName(row)} e alocar professor`}><BookOpen size={14} /><span>Ofertar</span></button>}
+                                    {activeResource === 'teachers' && <button className="button small row-action" onClick={() => setOfferTarget({ teacherId: row.id })} aria-label={`Alocar ${displayName(row)} a uma oferta`}><Users size={14} /><span>Alocar</span></button>}
+                                    {activeResource === 'subject-offerings' && <button className="button small row-action" onClick={() => setOfferTarget({ subjectId: Number(row.subject), groupId: Number(row.group) })} aria-label={`Alocar professor para ${displayName(row)}`}><Users size={14} /><span>Alocar</span></button>}
                                   </div>
                                 </td>
                               </tr>
@@ -1193,7 +1224,7 @@ export default function App({
                 </>
               )}
 
-              {section === 'import' && <><div className="page-heading"><div><span className="eyebrow">CADASTRO RÁPIDO</span><h1>Importar em lote</h1><p>Cole linhas da planilha ou carregue CSV/TSV. Baixe um modelo para cada tipo de cadastro.</p></div></div><div className="import-grid">{([['courses', 'Cursos', 'Códigos, nomes e modalidades'], ['subjects', 'Disciplinas', 'Créditos, horas presenciais e percentual EAD'], ['teachers', 'Professores', 'Códigos e nomes, sem limite semanal'], ['rooms', 'Salas', 'Códigos, nomes e capacidade'], ['class-groups', 'Turmas', 'Códigos e nomes vinculados ao curso e período'], ['offerings', 'Ofertas', 'Turma, disciplina, professor e horas por bloco']] as [ImportKind, string, string][]).map(([kind, title, description]) => <section className="panel import-card" key={kind}><FileUp size={22} /><h3>{title}</h3><p>{description}</p><button className="button primary" onClick={() => setImportKind(kind)}>Importar {title.toLowerCase()}</button></section>)}</div></>}
+              {section === 'import' && <><div className="page-heading"><div><span className="eyebrow">CADASTRO RÁPIDO</span><h1>Importar em lote</h1><p>Cole linhas da planilha ou carregue CSV/TSV. Baixe um modelo para cada tipo de cadastro.</p></div></div><div className="import-grid">{([['courses', 'Cursos', 'Códigos, nomes e modalidades'], ['subjects', 'Disciplinas', 'Créditos, horas presenciais e horas EAD semanais'], ['teachers', 'Professores', 'Códigos e nomes, sem limite semanal'], ['rooms', 'Salas', 'Códigos, nomes e capacidade'], ['class-groups', 'Turmas', 'Códigos e nomes vinculados ao curso e período'], ['offerings', 'Ofertas', 'Turma, disciplina, professor e horas por bloco']] as [ImportKind, string, string][]).map(([kind, title, description]) => <section className="panel import-card" key={kind}><FileUp size={22} /><h3>{title}</h3><p>{description}</p><button className="button primary" onClick={() => setImportKind(kind)}>Importar {title.toLowerCase()}</button></section>)}</div></>}
 
               {section === 'time' && (
                 <>
@@ -1201,12 +1232,12 @@ export default function App({
                     <div>
                       <span className="eyebrow">CONFIGURAÇÃO TEMPORAL</span>
                       <h1>Janelas de horários e perfis</h1>
-                      <p>Perfis livres, dias de funcionamento e faixas configuradas em minutos reais.</p>
+                      <p>Organize as janelas vigentes de Manhã e Noite. Entre aulas de dias consecutivos, o professor precisa descansar ao menos 11 horas.</p>
                     </div>
-                    <button className="button primary" onClick={() => openCreateModal('time-profiles')}>
-                      <Plus size={18} />
-                      Novo perfil
-                    </button>
+                    <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                      <button className="button primary" disabled={!institution || settingShifts} onClick={() => void setupShifts()}><Clock3 size={18} />{settingShifts ? 'Configurando…' : 'Ativar Manhã e Noite'}</button>
+                      <button className="button" onClick={() => openCreateModal('time-profiles')}><Plus size={18} />Novo perfil</button>
+                    </div>
                   </div>
                   <div className="profile-grid">
                     {data['time-profiles'].map((profile) => {
@@ -1273,10 +1304,19 @@ export default function App({
                       onEdit={(item) => openEditModal('time-windows', item)}
                       onDelete={(item) => { setDeleteError(''); setDeleteTarget({ resource: 'time-windows', item }); }}
                     />
+                    <ListPanel
+                      resource="time-blocks"
+                      title="Intervalos dentro do dia"
+                      rows={data['time-blocks']}
+                      data={data}
+                      onAdd={() => openCreateModal('time-blocks', { institution: String(institution?.id ?? '') })}
+                      onEdit={(item) => openEditModal('time-blocks', item)}
+                      onDelete={(item) => { setDeleteError(''); setDeleteTarget({ resource: 'time-blocks', item }); }}
+                    />
                   </div>
                   <div className="info-note">
                     <Clock3 size={18} />
-                    <span>Os horários são 100% configuráveis. Nenhum turno ou início de aula está fixado no código.</span>
+                    <span>Os perfis padrão usam 08:00–12:00 e 17:50–21:50, de segunda a sexta, e podem ser editados. A regra de 11 horas vale entre dias consecutivos; intervalos dentro do mesmo dia podem ser bloqueados acima.</span>
                   </div>
                 </>
               )}
@@ -1339,7 +1379,7 @@ export default function App({
                 Tem certeza que deseja apagar o registro <strong>"{displayName(deleteTarget.item)}"</strong>?
               </p>
               <p style={{ marginTop: '8px', fontSize: '12px', color: 'var(--color-text-muted)' }}>
-                Esta ação removerá o item do sistema. Registros com aulas ativas na grade ou vínculos dependentes serão protegidos contra remoção acidental.
+                Itens vinculados a ofertas, aulas ou outros cadastros não podem ser excluídos. Remova esses vínculos primeiro.
               </p>
             </div>
 

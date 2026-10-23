@@ -82,6 +82,18 @@ def validate_session(session, other_sessions=None):
             add("ROOM_OVERLAP", "A sala já está ocupada neste intervalo.", "room", session.room_id, other.pk)
         if other.requirement.offering.group_id == group.id:
             add("GROUP_OVERLAP", "A turma já possui aula neste intervalo.", "group", group.id, other.pk)
+    # Mínimo de 11 horas entre dias consecutivos, inclusive domingo → segunda.
+    previous_day = (session.weekday - 2) % 7 + 1
+    next_day = session.weekday % 7 + 1
+    for other in ScheduledSession.objects.filter(
+        schedule__term_id=term_id, teacher_id=session.teacher_id, weekday__in=[previous_day, next_day]
+    ).exclude(pk=session.pk):
+        if other.weekday == previous_day:
+            gap = 24 * 60 + start - minutes(other.ends_at)
+        else:
+            gap = 24 * 60 + minutes(other.starts_at) - end
+        if gap < 11 * 60:
+            add("TEACHER_MIN_REST", "O professor precisa de pelo menos 11 horas entre aulas de dias consecutivos.", "teacher", session.teacher_id, other.pk)
     if session.teacher.max_weekly_minutes is not None:
         weekly = end - start
         for other in ScheduledSession.objects.filter(schedule__term_id=term_id, teacher_id=session.teacher_id).exclude(pk=session.pk):

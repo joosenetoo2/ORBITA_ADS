@@ -17,12 +17,14 @@ def offer_subject(subject, group, teacher, block_hours=2):
     if block_hours not in range(1, 5):
         raise ValidationError({"block_hours": "Informe 1, 2, 3 ou 4 horas por bloco."})
     offering, created = models.SubjectOffering.objects.get_or_create(group=group, subject=subject)
+    if not created:
+        if offering.eligible_teachers.filter(pk=teacher.pk).exists():
+            raise ValidationError({"offering": "Esta disciplina já está ofertada para esta turma com este professor. Use a oferta existente na grade."})
+        offering.eligible_teachers.add(teacher)
+        return offering, False
     offering.eligible_teachers.add(teacher)
     desired_minutes = subject.onsite_weekly_hours * 60
-    planned_minutes = sum(item.duration_minutes * item.weekly_count for item in offering.requirements.all())
-    if planned_minutes > desired_minutes:
-        raise ValidationError({"subject": "A grade existente já tem mais horas do que as horas presenciais definidas na disciplina."})
-    remaining_hours = (desired_minutes - planned_minutes) // 60
+    remaining_hours = subject.onsite_weekly_hours
     if remaining_hours:
         full, remainder = divmod(remaining_hours, block_hours)
         if full:

@@ -1,6 +1,6 @@
 from django.conf import settings
 from django.core.exceptions import ValidationError
-from django.core.validators import MaxValueValidator, MinValueValidator
+from django.core.validators import MinValueValidator
 from django.db import models
 
 
@@ -77,7 +77,7 @@ class Subject(ActiveModel):
     workload_unit = models.CharField(max_length=12, choices=Unit.choices, default=Unit.CLASS_HOUR)
     credits = models.PositiveSmallIntegerField(null=True, blank=True, validators=[MinValueValidator(1)])
     onsite_weekly_hours = models.PositiveSmallIntegerField(null=True, blank=True)
-    ead_percentage = models.PositiveSmallIntegerField(default=0, validators=[MaxValueValidator(100)])
+    ead_weekly_hours = models.PositiveSmallIntegerField(default=0)
     required_features = models.ManyToManyField("RoomFeature", blank=True)
 
     class Meta:
@@ -89,6 +89,8 @@ class Subject(ActiveModel):
     def clean(self):
         if self.credits is not None and self.onsite_weekly_hours is not None and self.onsite_weekly_hours > self.credits:
             raise ValidationError({"onsite_weekly_hours": "As horas presenciais semanais não podem exceder os créditos."})
+        if self.credits is not None and self.onsite_weekly_hours is not None and self.onsite_weekly_hours + self.ead_weekly_hours > self.credits:
+            raise ValidationError({"ead_weekly_hours": "A soma das horas presenciais e EAD semanais não pode exceder os créditos."})
         if self.workload_unit != self.Unit.CLASS_HOUR:
             raise ValidationError({"workload_unit": "A carga das disciplinas é sempre em hora-aula de 60 minutos."})
 
@@ -212,6 +214,17 @@ class SessionRequirement(models.Model):
     duration_minutes = models.PositiveSmallIntegerField(validators=[MinValueValidator(1)])
     weekly_count = models.PositiveSmallIntegerField(validators=[MinValueValidator(1)])
     kind = models.CharField(max_length=80, blank=True)
+
+    def clean(self):
+        if not self.offering_id or not self.duration_minutes or not self.weekly_count:
+            return
+        limit = self.offering.subject.onsite_weekly_hours
+        if limit is None:
+            return
+        others = self.offering.requirements.exclude(pk=self.pk)
+        planned_minutes = sum(item.duration_minutes * item.weekly_count for item in others)
+        if planned_minutes + self.duration_minutes * self.weekly_count > limit * 60:
+            raise ValidationError({"weekly_count": "A oferta já contém todas as horas presenciais semanais desta disciplina."})
 
 
 class TimeProfile(ActiveModel):

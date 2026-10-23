@@ -45,7 +45,7 @@ def make_code(model, institution, name):
     return code
 
 
-def by_name(model, institution, name):
+def by_name(model, institution, name, *, create=False):
     name = str(name or "").strip()
     if not name:
         raise ValidationError({"name": "Informe disciplina, professor e sala."})
@@ -63,6 +63,8 @@ def by_name(model, institution, name):
     if len(candidates) > 1:
         raise ValidationError({"name": f"Há mais de um cadastro similar a '{name}'. Use os cadastros para corrigir a duplicidade."})
 
+    if not create:
+        raise ValidationError({"name": f"{name} não está cadastrado(a). Cadastre e oferte antes de montar a grade."})
     kwargs = {"institution": institution, "name": name, "code": make_code(model, institution, name)}
     return model.objects.create(**kwargs)
 
@@ -125,6 +127,8 @@ def save_cell(schedule, data):
         existing = models.ScheduledSession.objects.filter(pk=data["session_id"], schedule=schedule).select_related("requirement__offering").first()
         if not existing or existing.requirement.offering.group_id != group.pk:
             raise ValidationError({"session_id": "A aula não pertence a esta turma."})
+        if not existing.requirement.offering.is_active:
+            raise ValidationError({"offering": "Esta oferta está inativa. Reative-a antes de alterar a aula."})
         if "is_locked" in data:
             existing.is_locked = bool(data["is_locked"])
         if existing.is_locked and "is_locked" not in data:
@@ -135,8 +139,9 @@ def save_cell(schedule, data):
         )
         if same_requirement:
             teacher = by_name(models.Teacher, institution, data.get("teacher"))
+            if not existing.requirement.offering.eligible_teachers.filter(pk=teacher.pk).exists():
+                raise ValidationError({"teacher": "Este professor não está vinculado à oferta desta disciplina para a turma."})
             room = room_by_code(institution, data.get("room"))
-            existing.requirement.offering.eligible_teachers.add(teacher)
             existing.weekday = weekday
             existing.starts_at = chosen[0].starts_at
             existing.ends_at = chosen[-1].ends_at
@@ -154,10 +159,20 @@ def save_cell(schedule, data):
         reconcile(old_requirement)
 
     subject = by_name(models.Subject, institution, data.get("subject"))
+    offering = models.SubjectOffering.objects.filter(group=group, subject=subject, is_active=True).first()
+    if offering is None:
+        raise ValidationError({"offering": "Esta disciplina não foi ofertada para a turma. Faça a oferta antes de alocar na grade."})
     teacher = by_name(models.Teacher, institution, data.get("teacher"))
+    if not offering.eligible_teachers.filter(pk=teacher.pk).exists():
+        raise ValidationError({"teacher": "Este professor não está vinculado à oferta desta disciplina para a turma."})
     room = room_by_code(institution, data.get("room"))
-    offering, _ = models.SubjectOffering.objects.get_or_create(group=group, subject=subject)
-    offering.eligible_teachers.add(teacher)
+    if subject.onsite_weekly_hours is not None:
+        scheduled_minutes = sum(
+            session.requirement.duration_minutes
+            for session in models.ScheduledSession.objects.filter(requirement__offering=offering).select_related("requirement")
+        )
+        if scheduled_minutes + duration > subject.onsite_weekly_hours * 60:
+            raise ValidationError({"offering": "Todas as horas presenciais semanais desta disciplina já foram alocadas. As horas EAD não entram na grade."})
     planned = models.SessionRequirement.objects.filter(offering=offering, kind="AUTO_OFFER")
     if planned.exists():
         requirement = planned.filter(duration_minutes=duration).first()

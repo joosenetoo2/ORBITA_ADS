@@ -3,12 +3,12 @@ import { FileUp, X } from 'lucide-react';
 import { api, type RecordItem } from './api';
 import './catalog-actions.css';
 
-type CatalogData = { subjects: RecordItem[]; teachers: RecordItem[]; 'class-groups': RecordItem[]; courses: RecordItem[]; 'academic-terms': RecordItem[] };
+type CatalogData = { subjects: RecordItem[]; teachers: RecordItem[]; 'class-groups': RecordItem[]; 'subject-offerings': RecordItem[]; courses: RecordItem[]; 'academic-terms': RecordItem[] };
 type ImportKind = 'courses' | 'subjects' | 'teachers' | 'rooms' | 'class-groups' | 'offerings';
 const importLabels: Record<ImportKind, string> = { courses: 'Cursos', subjects: 'Disciplinas', teachers: 'Professores', rooms: 'Salas', 'class-groups': 'Turmas', offerings: 'Ofertas' };
 const examples: Record<ImportKind, string> = {
   courses: 'codigo;nome;modalidade\nADS;Análise e Desenvolvimento de Sistemas;Presencial',
-  subjects: 'codigo;nome;creditos;horas_presenciais;ead_percentual\nOO;Programação OO;4;3;25',
+  subjects: 'codigo;nome;creditos;horas_presenciais;horas_ead\nOO;Programação OO;4;3;1',
   teachers: 'codigo;nome\nANA;Ana Oliveira\nBRUNO;Bruno Silva',
   rooms: 'codigo;nome;capacidade\nH01;Sala H01;40',
   'class-groups': 'codigo;nome\nP1A;1º A\nP1B;1º B',
@@ -17,7 +17,8 @@ const examples: Record<ImportKind, string> = {
 const aliases: Record<string, string> = {
   codigo: 'code', cod: 'code', code: 'code', nome: 'name', name: 'name',
   creditos: 'credits', credits: 'credits', horas_presenciais: 'onsite_weekly_hours', horas_presenciais_semanais: 'onsite_weekly_hours', onsite_weekly_hours: 'onsite_weekly_hours',
-  ead_percentual: 'ead_percentage', percentual_ead: 'ead_percentage', ead_percentage: 'ead_percentage', ead: 'ead_percentage',
+  horas_ead: 'ead_weekly_hours', ead_horas: 'ead_weekly_hours', horas_ead_semanais: 'ead_weekly_hours', ead_weekly_hours: 'ead_weekly_hours',
+  ead_percentual: 'ead_percentage', percentual_ead: 'ead_percentage', ead_percentage: 'ead_percentage',
   capacidade: 'capacity', capacity: 'capacity', turma: 'group_code', group_code: 'group_code',
   disciplina: 'subject_code', subject_code: 'subject_code', professor: 'teacher_code', teacher_code: 'teacher_code',
   horas_por_bloco: 'block_hours', block_hours: 'block_hours',
@@ -53,15 +54,19 @@ export function OfferModal({ data, subjectId, teacherId, groupId, onClose, onSav
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
   const selected = data.subjects.find((item) => item.id === Number(subject));
+  const existing = data['subject-offerings'].find((item) => Number(item.group) === Number(group) && Number(item.subject) === Number(subject));
+  const teacherAlreadyLinked = Boolean(existing && Array.isArray(existing.eligible_teachers) && existing.eligible_teachers.some((id) => Number(id) === Number(teacher)));
   async function submit(event: FormEvent) {
-    event.preventDefault(); setBusy(true); setError('');
+    event.preventDefault();
+    if (teacherAlreadyLinked) { setError('Esta disciplina já está ofertada para a turma com este professor.'); return; }
+    setBusy(true); setError('');
     try {
       const result = await api<{ created: boolean }>(`subjects/${subject}/offer/`, { method: 'POST', body: JSON.stringify({ group_id: Number(group), teacher_id: Number(teacher), block_hours: Number(blockHours) }) });
-      onSaved(result.created ? 'Disciplina ofertada. As aulas presenciais já estão prontas para alocação na grade.' : 'Professor vinculado à oferta existente.');
+      onSaved(result.created ? 'Disciplina ofertada. As aulas presenciais já estão prontas para alocação na grade.' : 'Professor vinculado à oferta existente. Nenhuma aula nova foi criada.');
     } catch (reason) { setError(reason instanceof Error ? reason.message : 'Não foi possível ofertar.'); }
     finally { setBusy(false); }
   }
-  return <div className="modal-backdrop" onMouseDown={onClose}><section className="modal catalog-modal" role="dialog" aria-modal="true" aria-labelledby="offer-title" onMouseDown={(event) => event.stopPropagation()}><div className="modal-head"><div><span className="eyebrow">OFERTA DE DISCIPLINA</span><h2 id="offer-title">Ofertar e alocar professor</h2></div><button className="icon-button" onClick={onClose} aria-label="Fechar"><X /></button></div><form onSubmit={submit}><div className="form-grid"><label className="form-field">Disciplina<select required value={subject} onChange={(event) => setSubject(event.target.value)}><option value="">Selecione…</option>{data.subjects.map((item) => <option key={item.id} value={item.id}>{String(item.name)}</option>)}</select></label><label className="form-field">Turma<select required value={group} onChange={(event) => setGroup(event.target.value)}><option value="">Selecione…</option>{data['class-groups'].map((item) => <option key={item.id} value={item.id}>{String(item.name || item.code)} · {String(data.courses.find((course) => course.id === item.course)?.code ?? '')} · {String(data['academic-terms'].find((term) => term.id === item.term)?.name ?? '')}</option>)}</select></label><label className="form-field">Professor<select required value={teacher} onChange={(event) => setTeacher(event.target.value)}><option value="">Selecione…</option>{data.teachers.map((item) => <option key={item.id} value={item.id}>{String(item.name)}</option>)}</select></label><label className="form-field">Duração preferida do bloco<select value={blockHours} onChange={(event) => setBlockHours(event.target.value)}>{[1, 2, 3, 4].map((hours) => <option key={hours} value={hours}>{hours} {hours === 1 ? 'hora' : 'horas'}</option>)}</select></label></div><p className="catalog-hint">{selected ? `${selected.credits ?? '—'} créditos · ${selected.total_workload ?? '—'} horas totais · ${selected.onsite_weekly_hours ?? '—'} horas presenciais por semana. A parte EAD fica fora da grade.` : 'Selecione a disciplina para ver a carga presencial que será alocada.'}</p>{error && <p className="form-error" role="alert">{error}</p>}<div className="modal-actions"><button type="button" className="button ghost" onClick={onClose}>Cancelar</button><button className="button primary" disabled={busy}>{busy ? 'Salvando…' : 'Ofertar disciplina'}</button></div></form></section></div>;
+  return <div className="modal-backdrop" onMouseDown={onClose}><section className="modal catalog-modal" role="dialog" aria-modal="true" aria-labelledby="offer-title" onMouseDown={(event) => event.stopPropagation()}><div className="modal-head"><div><span className="eyebrow">OFERTA DE DISCIPLINA</span><h2 id="offer-title">{existing ? 'Professor da oferta existente' : 'Ofertar e alocar professor'}</h2></div><button className="icon-button" onClick={onClose} aria-label="Fechar"><X /></button></div><form onSubmit={submit}><div className="form-grid"><label className="form-field">Disciplina<select required value={subject} onChange={(event) => setSubject(event.target.value)}><option value="">Selecione…</option>{data.subjects.map((item) => <option key={item.id} value={item.id}>{String(item.name)}</option>)}</select></label><label className="form-field">Turma<select required value={group} onChange={(event) => setGroup(event.target.value)}><option value="">Selecione…</option>{data['class-groups'].map((item) => <option key={item.id} value={item.id}>{String(item.name || item.code)} · {String(data.courses.find((course) => course.id === item.course)?.code ?? '')} · {String(data['academic-terms'].find((term) => term.id === item.term)?.name ?? '')}</option>)}</select></label><label className="form-field">Professor<select required value={teacher} onChange={(event) => setTeacher(event.target.value)}><option value="">Selecione…</option>{data.teachers.map((item) => <option key={item.id} value={item.id}>{String(item.name)}</option>)}</select></label>{!existing && <label className="form-field">Duração preferida do bloco<select value={blockHours} onChange={(event) => setBlockHours(event.target.value)}>{[1, 2, 3, 4].map((hours) => <option key={hours} value={hours}>{hours} {hours === 1 ? 'hora' : 'horas'}</option>)}</select></label>}</div><p className="catalog-hint">{existing ? teacherAlreadyLinked ? 'Esta disciplina já está ofertada para a turma com este professor. Nenhuma nova oferta ou aula será criada.' : 'Esta disciplina já está ofertada para a turma. O professor selecionado será vinculado à oferta existente, sem criar novas aulas.' : selected ? `${selected.credits ?? '—'} créditos · ${selected.total_workload ?? '—'} horas totais · ${selected.onsite_weekly_hours ?? '—'} horas presenciais + ${selected.ead_weekly_hours ?? 0} horas EAD por semana. Apenas as presenciais entram na grade.` : 'Selecione a disciplina para ver a carga semanal que será alocada.'}</p>{error && <p className="form-error" role="alert">{error}</p>}<div className="modal-actions"><button type="button" className="button ghost" onClick={onClose}>Cancelar</button><button className="button primary" disabled={busy || teacherAlreadyLinked}>{busy ? 'Salvando…' : existing ? 'Vincular professor' : 'Ofertar disciplina'}</button></div></form></section></div>;
 }
 
 export function ImportModal({ kind, data, onClose, onSaved }: { kind: ImportKind; data: CatalogData; onClose: () => void; onSaved: (message: string) => void }) {

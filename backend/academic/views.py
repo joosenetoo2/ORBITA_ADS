@@ -1,4 +1,4 @@
-from datetime import date
+from datetime import date, time
 
 from django.core.exceptions import ValidationError as DjangoValidationError
 from django.db import transaction
@@ -88,7 +88,32 @@ TeacherViewSet = viewset_for(models.Teacher, serializers.TeacherSerializer)
 RoomFeatureViewSet = viewset_for(models.RoomFeature, serializers.RoomFeatureSerializer)
 RoomViewSet = viewset_for(models.Room, serializers.RoomSerializer)
 ClassGroupViewSet = viewset_for(models.ClassGroup, serializers.ClassGroupSerializer)
-SubjectOfferingViewSet = viewset_for(models.SubjectOffering, serializers.SubjectOfferingSerializer)
+class SubjectOfferingViewSet(AcademicViewSet):
+    queryset = models.SubjectOffering.objects.all().order_by("pk")
+    serializer_class = serializers.SubjectOfferingSerializer
+
+    @action(detail=False, methods=["post"], url_path="bulk-assign")
+    def bulk_assign(self, request):
+        items = request.data.get("items")
+        if not isinstance(items, list) or not items or len(items) > 200:
+            raise ValidationError({"items": "Selecione de 1 a 200 disciplinas."})
+        group = get_object_or_404(models.ClassGroup, pk=request.data.get("group_id"), is_active=True)
+        subject_ids = [item.get("subject_id") for item in items if isinstance(item, dict)]
+        if len(subject_ids) != len(items) or len(set(map(str, subject_ids))) != len(items):
+            raise ValidationError({"items": "Cada disciplina deve aparecer apenas uma vez."})
+        with transaction.atomic():
+            created_ids = []
+            for index, item in enumerate(items, 1):
+                subject = get_object_or_404(models.Subject, pk=item.get("subject_id"), is_active=True)
+                teacher = get_object_or_404(models.Teacher, pk=item.get("teacher_id"), is_active=True)
+                if models.SubjectOffering.objects.filter(group=group, subject=subject).exists():
+                    raise ValidationError({"items": f"Linha {index}: {subject.name} já está ofertada para {group.code}."})
+                offering, _ = offer_subject(subject, group, teacher, item.get("block_hours", 2))
+                created_ids.append(offering.pk)
+            models.AuditEvent.objects.create(actor=request.user, action="SUBJECTS_BULK_OFFERED", entity="ClassGroup", entity_id=str(group.pk), metadata={"offering_ids": created_ids})
+        return Response({"created": len(created_ids), "offering_ids": created_ids}, status=status.HTTP_201_CREATED)
+
+
 SessionRequirementViewSet = viewset_for(models.SessionRequirement, serializers.SessionRequirementSerializer)
 
 
@@ -145,9 +170,11 @@ class BatchImportView(APIView):
                             skipped += 1; continue
                         credits = self._integer(row.get("credits"), "credits", minimum=1, maximum=40)
                         onsite = self._integer(row.get("onsite_weekly_hours"), "onsite_weekly_hours", maximum=credits)
-                        ead = self._integer(row.get("ead_percentage", 0) or 0, "ead_percentage", maximum=100)
+                        if "ead_percentage" in row:
+                            raise ValidationError({"ead_weekly_hours": "Este CSV usa percentual EAD. Substitua a coluna por horas_ead e informe horas semanais."})
+                        ead = self._integer(row.get("ead_weekly_hours", 0) or 0, "ead_weekly_hours", maximum=credits)
                         obj = models.Subject(institution=institution, code=code, name=name, credits=credits,
-                                             onsite_weekly_hours=onsite, ead_percentage=ead,
+                                             onsite_weekly_hours=onsite, ead_weekly_hours=ead,
                                              total_workload=credits * 20, workload_unit=models.Subject.Unit.CLASS_HOUR)
                     elif resource == "teachers":
                         if models.Teacher.objects.filter(institution=institution, code__iexact=code).exists():
@@ -241,6 +268,32 @@ class TimeProfileViewSet(SafeTimeConfigurationMixin, AcademicViewSet):
     serializer_class = serializers.TimeProfileSerializer
     admin_only = True
 
+    @action(detail=False, methods=["post"], url_path="setup-shifts")
+    def setup_shifts(self, request):
+        institution = get_object_or_404(models.Institution, pk=request.data.get("institution_id"))
+        defaults = (("Manhã", time(8), time(12), 0), ("Noite", time(17, 50), time(21, 50), 1))
+        with transaction.atomic():
+            sessions = list(models.ScheduledSession.objects.filter(schedule__course__institution=institution).select_related(
+                "schedule", "requirement__offering__group__course", "requirement__offering__subject", "teacher", "room"
+            ))
+            before = {item.pk: {conflict["code"] for conflict in validate_session(item)} & {"OUTSIDE_WINDOW"} for item in sessions}
+            profiles = []
+            for name, start, end, order in defaults:
+                profile, _ = models.TimeProfile.objects.get_or_create(institution=institution, name=name, defaults={"display_order": order})
+                if not profile.is_active:
+                    profile.is_active = True
+                    profile.save(update_fields=["is_active", "updated_at"])
+                if not profile.windows.exists():
+                    for weekday in range(1, 6):
+                        models.TimeWindow.objects.create(institution=institution, profile=profile, weekday=weekday, starts_at=start, ends_at=end)
+                profiles.append(profile)
+            affected = [item.pk for item in sessions if ({conflict["code"] for conflict in validate_session(item)} & {"OUTSIDE_WINDOW"}) - before[item.pk]]
+            if affected:
+                transaction.set_rollback(True)
+                return Response({"code": "CONFIGURATION_AFFECTS_SESSIONS", "message": "Os horários padrão de manhã e noite restringiriam aulas já alocadas. Ajuste as janelas manualmente.", "affected_session_ids": affected}, status=status.HTTP_409_CONFLICT)
+            models.AuditEvent.objects.create(actor=request.user, action="SHIFT_PROFILES_CONFIGURED", entity="Institution", entity_id=str(institution.pk), metadata={"profile_ids": [item.pk for item in profiles]})
+        return Response({"profiles": [{"id": item.pk, "name": item.name} for item in profiles]})
+
 
 class TimeWindowViewSet(SafeTimeConfigurationMixin, AcademicViewSet):
     queryset = models.TimeWindow.objects.all().order_by("weekday", "starts_at")
@@ -273,6 +326,28 @@ class ScheduleViewSet(AcademicViewSet):
 
     def destroy(self, request, *args, **kwargs):
         raise MethodNotAllowed("DELETE")
+
+    @staticmethod
+    def _grid_blocks(offer):
+        requirements = list(offer.requirements.all())
+        planned = [item for item in requirements if item.kind == "AUTO_OFFER"]
+        if planned:
+            return [{"duration_minutes": item.duration_minutes,
+                     "remaining": max(0, item.weekly_count - models.ScheduledSession.objects.filter(requirement=item).count())}
+                    for item in planned]
+        used = sum(item.requirement.duration_minutes for item in models.ScheduledSession.objects.filter(requirement__offering=offer).select_related("requirement"))
+        available = None if offer.subject.onsite_weekly_hours is None else max(0, offer.subject.onsite_weekly_hours * 60 - used)
+        return [{"duration_minutes": hours * 60, "remaining": 1 if available is None or available >= hours * 60 else 0} for hours in range(1, 5)]
+
+    @action(detail=False, methods=["post"], url_path="from-offerings")
+    def from_offerings(self, request):
+        group = get_object_or_404(models.ClassGroup, pk=request.data.get("group_id"), is_active=True)
+        if not models.SubjectOffering.objects.filter(group=group, is_active=True).exists():
+            raise ValidationError({"group_id": "Oferte ao menos uma disciplina para esta turma antes de criar a grade."})
+        with transaction.atomic():
+            schedule, created = models.Schedule.objects.get_or_create(course=group.course, term=group.term)
+            models.AuditEvent.objects.create(actor=request.user, action="GRID_OPENED_FROM_OFFERINGS", entity="Schedule", entity_id=str(schedule.pk), metadata={"group_id": group.pk, "created": created})
+        return Response({"id": schedule.pk, "created": created}, status=status.HTTP_201_CREATED if created else status.HTTP_200_OK)
 
     @staticmethod
     def _configure_slots(schedule, slot_values, weekdays):
@@ -370,12 +445,18 @@ class ScheduleViewSet(AcademicViewSet):
     def grid(self, request, pk=None):
         schedule = self.get_object()
         groups = models.ClassGroup.objects.filter(course=schedule.course, term=schedule.term, is_active=True).order_by("code")
+        offerings = models.SubjectOffering.objects.filter(group__in=groups, is_active=True).select_related("subject").prefetch_related("eligible_teachers", "requirements")
         sessions = schedule.sessions.select_related("requirement__offering__subject", "requirement__offering__group", "teacher", "room").order_by("weekday", "starts_at")
         return Response({
             "id": schedule.pk, "revision": schedule.revision, "course": schedule.course.name, "term": schedule.term.name,
             "institution": schedule.course.institution.name,
             "weekdays": list(models.TimeWindow.objects.filter(institution=schedule.course.institution, scope=models.Scope.COURSE, scope_id=schedule.course_id, is_active=True).values_list("weekday", flat=True).distinct().order_by("weekday")),
             "groups": [{"id": group.pk, "code": group.code, "name": group.name} for group in groups],
+            "offerings": [{"id": offer.pk, "group_id": offer.group_id, "subject": offer.subject.name,
+                           "onsite_weekly_hours": offer.subject.onsite_weekly_hours,
+                           "teachers": [{"id": teacher.pk, "name": teacher.name} for teacher in offer.eligible_teachers.all()],
+                           "blocks": self._grid_blocks(offer)}
+                          for offer in offerings],
             "slots": [{"id": slot.pk, "start": slot.starts_at.strftime("%H:%M"), "end": slot.ends_at.strftime("%H:%M")} for slot in schedule.slots.all()],
             "sessions": [{"id": item.pk, "group_id": item.requirement.offering.group_id, "weekday": item.weekday,
                           "start": item.starts_at.strftime("%H:%M"), "end": item.ends_at.strftime("%H:%M"),
