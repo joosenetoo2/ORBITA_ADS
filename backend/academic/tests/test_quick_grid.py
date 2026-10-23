@@ -16,7 +16,7 @@ class QuickGridTests(TestCase):
         response = self.client.post("/api/v1/schedules/quick-setup/", {
             "institution": "Faculdade", "course_code": "ADS", "course_name": "Análise e Desenvolvimento de Sistemas",
             "term": "2027.1", "starts_on": "2027-01-01", "ends_on": "2027-06-30",
-            "groups": ["1º A", "1º C"], "time_profile_id": profile.pk, "weekdays": [1, 2, 3, 4, 5],
+            "groups": ["1º A", "1º C"], "group_period": 1, "time_profile_id": profile.pk, "weekdays": [1, 2, 3, 4, 5],
             "slots": [{"start": "17:50", "end": "18:50"}, {"start": "18:50", "end": "19:50"}, {"start": "19:50", "end": "20:50"}],
         }, format="json")
         self.assertEqual(response.status_code, 201, response.data)

@@ -656,6 +656,7 @@ function Modal({
             })}
           </div>
           {resource === 'class-groups' && <datalist id="group-name-options">{Array.from({ length: 10 }, (_, index) => index + 1).flatMap((period) => ['A', 'B', 'C', 'D'].map((letter) => <option key={`${period}-${letter}`} value={`${period}º ${letter}`} />))}</datalist>}
+          {resource === 'class-groups' && !data['time-profiles'].some((profile) => profile.is_active) && <p className="catalog-hint">Ative Manhã e Noite em Regras de horário antes de cadastrar turmas.</p>}
           {resource === 'subjects' && <p className="catalog-hint">Cada crédito corresponde a 1 hora-aula semanal de 60 minutos e a 20 horas-aula totais. Exemplo: 4 créditos = 3 horas presenciais + 1 hora EAD por semana. Apenas as horas presenciais entram na grade.</p>}
 
           {error && (
@@ -1079,7 +1080,7 @@ export default function App({
           )}
 
           {section === 'grid' ? (
-            <GridWorkspace key={gridRefresh} initialScheduleId={preferredScheduleId} onSetup={() => void loadData()} onOpenOffers={() => { setCatalogTab('subject-offerings'); navigate('catalog'); }} onOpenTimeProfiles={() => navigate('time')} />
+            <GridWorkspace key={gridRefresh} initialScheduleId={preferredScheduleId} canPublish={user.is_superuser || user.groups.includes('Administrador') || user.groups.includes('Coordenador')} onSetup={() => void loadData()} onOpenOffers={() => { setCatalogTab('subject-offerings'); navigate('catalog'); }} onOpenTimeProfiles={() => navigate('time')} />
           ) : loading ? (
             <div className="loading-state">
               <RefreshCw size={30} className="spinning" style={{ color: 'var(--color-secondary)' }} />
@@ -1202,16 +1203,26 @@ export default function App({
                       <div className="highlight-illustration">
                         <Clock3 size={48} strokeWidth={1.5} />
                       </div>
-                      <h3>Organização sem turnos fixos</h3>
+                      <h3>Manhã e noite em grades separadas</h3>
                       <p>
-                        O Órbita Acadêmico permite modelar horários dinâmicos por minutos reais. Crie perfis customizados
-                        por curso ou turma sem depender de modelos rígidos.
+                        Defina o turno e o período curricular da turma. As ofertas mostram apenas as disciplinas daquele período, e cada grade usa as janelas do seu turno.
                       </p>
                       <button className="text-button" onClick={() => navigate('time')}>
                         Gerenciar perfis e janelas →
                       </button>
                     </section>
                   </div>
+                  <section className="panel" style={{ marginTop: 20 }} aria-labelledby="flow-title">
+                    <div className="panel-head"><div><span className="eyebrow">FLUXO DE PUBLICAÇÃO</span><h3 id="flow-title">Do cadastro ao horário dos alunos</h3></div></div>
+                    <div className="steps">
+                      {[
+                        { title: '1. Cadastrar disciplinas e turmas', detail: 'Informe o período curricular e escolha Manhã ou Noite para cada turma.', action: () => { setCatalogTab('class-groups'); navigate('catalog'); }, label: 'Ver turmas' },
+                        { title: '2. Preparar ofertas', detail: 'Vincule professores apenas às disciplinas do período da turma.', action: () => { setCatalogTab('subject-offerings'); navigate('catalog'); }, label: 'Preparar ofertas' },
+                        { title: '3. Montar a grade', detail: 'Abra a grade do turno e distribua os blocos nas janelas disponíveis.', action: () => navigate('grid'), label: 'Montar grade' },
+                        { title: '4. Publicar para os alunos', detail: 'Valide a grade, publique e compartilhe o link de consulta pública.', action: () => navigate('grid'), label: 'Ir para publicação' },
+                      ].map((step) => <div className="step" key={step.title} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 16 }}><span><strong>{step.title}</strong><small>{step.detail}</small></span><button type="button" className="button small" onClick={step.action}>{step.label}</button></div>)}
+                    </div>
+                  </section>
                 </>
               )}
 

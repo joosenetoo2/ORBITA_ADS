@@ -7,9 +7,10 @@ from django.db.models.deletion import ProtectedError
 from django.shortcuts import get_object_or_404
 from rest_framework import status, viewsets
 from rest_framework.decorators import action
-from rest_framework.exceptions import ValidationError
+from rest_framework.exceptions import PermissionDenied, ValidationError
 from rest_framework.response import Response
 from rest_framework.views import APIView
+from rest_framework.permissions import AllowAny
 
 from . import models, serializers
 from .permissions import AcademicPermission
@@ -481,7 +482,8 @@ class ScheduleViewSet(AcademicViewSet):
         for day in set(weekdays):
             for start, end in runs:
                 models.TimeWindow.objects.get_or_create(
-                    institution=schedule.course.institution, scope=models.Scope.COURSE, scope_id=schedule.course_id,
+                    institution=schedule.course.institution, profile=schedule.time_profile if (end.hour * 60 + end.minute - start.hour * 60 - start.minute) % schedule.course.institution.class_minutes == 0 else None,
+                    scope=models.Scope.COURSE, scope_id=schedule.course_id,
                     weekday=day, starts_at=start, ends_at=end,
                 )
 
@@ -521,6 +523,12 @@ class ScheduleViewSet(AcademicViewSet):
             raise ValidationError({"setup": "Informe datas válidas e ao menos uma turma."})
         if len(groups) != len(set(groups)) or any(not value or len(value) > 50 for value in groups):
             raise ValidationError({"groups": "As turmas devem ter nomes únicos com até 50 caracteres."})
+        try:
+            group_period = int(data.get("group_period"))
+        except (TypeError, ValueError):
+            raise ValidationError({"group_period": "Informe o período curricular das turmas."})
+        if group_period not in range(1, 21):
+            raise ValidationError({"group_period": "Escolha um período curricular entre 1 e 20."})
         with transaction.atomic():
             institution = models.Institution.objects.first()
             if institution is None:
@@ -539,7 +547,9 @@ class ScheduleViewSet(AcademicViewSet):
                     raise ValidationError({"groups": f"A turma {code} pertence a outro curso."})
                 if previous and previous.time_profile_id != profile.pk:
                     raise ValidationError({"groups": f"A turma {code} pertence a outro turno."})
-                models.ClassGroup.objects.get_or_create(course=course, term=term, code=code, defaults={"time_profile": profile, "period_number": int(''.join(ch for ch in code if ch.isdigit())[:2] or 1)})
+                if previous and previous.period_number != group_period:
+                    raise ValidationError({"groups": f"A turma {code} pertence a outro período curricular."})
+                models.ClassGroup.objects.get_or_create(course=course, term=term, code=code, defaults={"time_profile": profile, "period_number": group_period, "name": code})
             if models.TimeWindow.objects.filter(institution=institution, profile=profile, profile__is_active=True, is_active=True).exists():
                 self._apply_profile_structure(schedule)
             else:
@@ -570,7 +580,7 @@ class ScheduleViewSet(AcademicViewSet):
             "profile_slots_in_sync": not current_profile_slots or configured_slots == current_profile_slots,
             "weekdays": active_weekdays,
             "available_slot_ids_by_day": allowed_slots,
-            "groups": [{"id": group.pk, "code": group.code, "name": group.name} for group in groups],
+            "groups": [{"id": group.pk, "code": group.code, "name": group.name, "period_number": group.period_number} for group in groups],
             "offerings": [{"id": offer.pk, "group_id": offer.group_id, "subject": offer.subject.name,
                            "onsite_weekly_hours": offer.subject.onsite_weekly_hours,
                            "teachers": [{"id": teacher.pk, "name": teacher.name, "color": teacher.color} for teacher in offer.eligible_teachers.all()],
@@ -684,6 +694,45 @@ class ScheduleViewSet(AcademicViewSet):
     def versions(self, request, pk=None):
         return Response(serializers.ScheduleVersionSerializer(self.get_object().versions.order_by("-number"), many=True).data)
 
+    @action(detail=True, methods=["post"])
+    def publish(self, request, pk=None):
+        if not request.user.is_superuser and not request.user.groups.filter(name__in=["Administrador", "Coordenador"]).exists():
+            raise PermissionDenied("A publicação exige perfil de coordenador ou administrador.")
+        with transaction.atomic():
+            schedule = models.Schedule.objects.select_for_update().get(pk=self.get_object().pk)
+            self._check_revision(request, schedule)
+            if schedule.term.status == models.AcademicTerm.Status.CLOSED:
+                raise ValidationError({"term": "O período letivo está encerrado e não aceita publicação."})
+            result = self.validate(request, pk)
+            if not result.data["valid"]:
+                return Response({"valid": False, "conflicts": result.data["conflicts"]}, status=status.HTTP_409_CONFLICT)
+            grid = self.grid(request, pk).data
+            if not grid["sessions"]:
+                raise ValidationError({"schedule": "Aloque ao menos uma aula antes de publicar."})
+            snapshot = {key: grid[key] for key in ("id", "revision", "course", "term", "institution", "time_profile_name", "weekdays", "groups", "slots", "sessions")}
+            number = (schedule.versions.order_by("-number").values_list("number", flat=True).first() or 0) + 1
+            version = models.ScheduleVersion.objects.create(schedule=schedule, number=number, created_by=request.user, snapshot=snapshot)
+            schedule.published_version = number
+            schedule.revision = F("revision") + 1
+            schedule.save(update_fields=["published_version", "revision", "updated_at"])
+            schedule.refresh_from_db(fields=["revision"])
+            models.AuditEvent.objects.create(actor=request.user, action="SCHEDULE_PUBLISHED", entity="Schedule", entity_id=str(schedule.pk), metadata={"version": number})
+            return Response({"version": number, "revision": schedule.revision, "published_at": version.created_at})
+
+    @action(detail=True, methods=["post"])
+    def unpublish(self, request, pk=None):
+        if not request.user.is_superuser and not request.user.groups.filter(name__in=["Administrador", "Coordenador"]).exists():
+            raise PermissionDenied("A despublicação exige perfil de coordenador ou administrador.")
+        with transaction.atomic():
+            schedule = models.Schedule.objects.select_for_update().get(pk=self.get_object().pk)
+            self._check_revision(request, schedule)
+            schedule.published_version = None
+            schedule.revision = F("revision") + 1
+            schedule.save(update_fields=["published_version", "revision", "updated_at"])
+            schedule.refresh_from_db(fields=["revision"])
+            models.AuditEvent.objects.create(actor=request.user, action="SCHEDULE_UNPUBLISHED", entity="Schedule", entity_id=str(schedule.pk))
+            return Response({"revision": schedule.revision})
+
     def _check_revision(self, request, schedule):
         try:
             expected = int(request.headers.get("If-Match", ""))
@@ -691,6 +740,29 @@ class ScheduleViewSet(AcademicViewSet):
             raise ValidationError({"code": "REVISION_REQUIRED", "message": "Envie a revisão atual em If-Match."})
         if expected != schedule.revision:
             raise ValidationError({"code": "STALE_REVISION", "message": "A grade foi alterada por outra pessoa.", "current_revision": schedule.revision})
+
+
+class PublicScheduleView(APIView):
+    authentication_classes = []
+    permission_classes = [AllowAny]
+
+    def get(self, request, schedule_id=None):
+        queryset = models.Schedule.objects.filter(is_active=True, published_version__isnull=False).select_related("course", "term", "time_profile")
+        if schedule_id is not None:
+            schedule = get_object_or_404(queryset, pk=schedule_id)
+            version = get_object_or_404(models.ScheduleVersion, schedule=schedule, number=schedule.published_version)
+            return Response({**version.snapshot, "version": version.number, "published_at": version.created_at})
+        rows = []
+        for schedule in queryset.order_by("course__name", "term__name", "time_profile__name"):
+            version = schedule.versions.filter(number=schedule.published_version).first()
+            if not version:
+                continue
+            snapshot = version.snapshot
+            rows.append({"id": schedule.pk, "course": snapshot["course"], "term": snapshot["term"],
+                         "institution": snapshot["institution"], "time_profile_name": snapshot["time_profile_name"],
+                         "version": version.number, "published_at": version.created_at,
+                         "period_numbers": sorted({group["period_number"] for group in snapshot["groups"] if group.get("period_number")})})
+        return Response(rows)
 
 
 class ScheduleSessionViewSet(AcademicViewSet):

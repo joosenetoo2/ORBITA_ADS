@@ -144,7 +144,7 @@ class ScheduleApiTests(TestCase):
         response = self.client.post("/api/v1/schedules/quick-setup/", {
             "institution": self.institution.name, "course_code": "ADS", "course_name": "ADS",
             "term": "2027.1", "starts_on": "2027-01-01", "ends_on": "2027-06-30",
-            "groups": ["ADS-B"], "time_profile_id": self.night.pk, "slots": [{"start": "13:00", "end": "14:00"}], "weekdays": [6],
+            "groups": ["ADS-B"], "group_period": 1, "time_profile_id": self.night.pk, "slots": [{"start": "13:00", "end": "14:00"}], "weekdays": [6],
         }, format="json")
         self.assertEqual(response.status_code, 201, response.data)
         grid = self.client.get(f"/api/v1/schedules/{self.schedule.pk}/grid/").data
@@ -170,6 +170,7 @@ class ScheduleApiTests(TestCase):
         }, format="json", HTTP_IF_MATCH="1")
         self.assertEqual(configured.status_code, 200, configured.data)
         profile = self.night
+        TimeWindow.objects.filter(profile=profile, scope="COURSE", scope_id=self.schedule.course_id).delete()
         TimeWindow.objects.create(institution=self.institution, profile=profile, weekday=1, starts_at=time(18, 30), ends_at=time(21, 30), scope="COURSE", scope_id=self.schedule.course_id)
         grid = self.client.get(f"/api/v1/schedules/{self.schedule.pk}/grid/").data
         self.assertFalse(grid["profile_slots_in_sync"])
@@ -183,6 +184,48 @@ class ScheduleApiTests(TestCase):
         message = " ".join(item["message"] for item in result.data["conflicts"])
         self.assertIn("Noite 18:30–21:30", message)
         self.assertIn("17:50–19:50", message)
+
+    def test_morning_and_night_have_separate_grids_and_groups(self):
+        morning = TimeProfile.objects.create(institution=self.institution, name="Manhã")
+        group = ClassGroup.objects.create(course=self.schedule.course, term=self.schedule.term, code="ADS-M", period_number=1, time_profile=morning)
+        subject = self.requirement.offering.subject
+        SubjectOffering.objects.create(group=group, subject=subject, weekly_minutes=100)
+        created = self.client.post("/api/v1/schedules/from-offerings/", {"group_id": group.pk}, format="json")
+        self.assertEqual(created.status_code, 201, created.data)
+        morning_grid = self.client.get(f"/api/v1/schedules/{created.data['id']}/grid/").data
+        night_grid = self.client.get(f"/api/v1/schedules/{self.schedule.pk}/grid/").data
+        self.assertEqual([item["id"] for item in morning_grid["groups"]], [group.pk])
+        self.assertEqual([item["id"] for item in night_grid["groups"]], [self.requirement.offering.group_id])
+        self.assertEqual(Schedule.objects.count(), 2)
+
+    def test_publish_exposes_snapshot_without_login_and_delete_removes_it(self):
+        TimeWindow.objects.create(institution=self.institution, weekday=2, starts_at=time(18), ends_at=time(22))
+        for occurrence, weekday in ((1, 1), (2, 2)):
+            response = self.client.post(f"/api/v1/schedules/{self.schedule.pk}/sessions/", {**self.payload(occurrence), "weekday": weekday}, format="json", HTTP_IF_MATCH=str(occurrence))
+            self.assertEqual(response.status_code, 201, response.data)
+        published = self.client.post(f"/api/v1/schedules/{self.schedule.pk}/publish/", {}, format="json", HTTP_IF_MATCH="3")
+        self.assertEqual(published.status_code, 200, published.data)
+        anonymous = APIClient()
+        listing = anonymous.get("/api/v1/public/schedules/")
+        self.assertEqual(listing.status_code, 200)
+        self.assertEqual(len(listing.data), 1)
+        detail = anonymous.get(f"/api/v1/public/schedules/{self.schedule.pk}/")
+        self.assertEqual(detail.status_code, 200)
+        self.assertEqual(len(detail.data["sessions"]), 2)
+        second_room = Room.objects.create(institution=self.institution, code="S2", name="Sala 2")
+        session = ScheduledSession.objects.first()
+        changed = self.client.patch(f"/api/v1/schedules/{self.schedule.pk}/sessions/{session.pk}/", {"room": second_room.pk}, format="json", HTTP_IF_MATCH="4")
+        self.assertEqual(changed.status_code, 200, changed.data)
+        self.assertTrue(any(item["room"] == "Sala 1" for item in anonymous.get(f"/api/v1/public/schedules/{self.schedule.pk}/").data["sessions"]))
+        removed = self.client.delete(f"/api/v1/schedules/{self.schedule.pk}/")
+        self.assertEqual(removed.status_code, 204)
+        self.assertEqual(anonymous.get(f"/api/v1/public/schedules/{self.schedule.pk}/").status_code, 404)
+
+    def test_publish_rejects_incomplete_schedule(self):
+        response = self.client.post(f"/api/v1/schedules/{self.schedule.pk}/publish/", {}, format="json", HTTP_IF_MATCH="1")
+        self.assertEqual(response.status_code, 409, response.data)
+        self.assertIsNone(Schedule.objects.get(pk=self.schedule.pk).published_version)
+        self.assertEqual(APIClient().get("/api/v1/public/schedules/").data, [])
 
     def test_api_rejects_less_than_eleven_hours_of_teacher_rest(self):
         TimeWindow.objects.create(institution=self.institution, weekday=2, starts_at=time(8), ends_at=time(12))

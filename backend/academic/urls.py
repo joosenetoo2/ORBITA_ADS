@@ -26,6 +26,8 @@ for route, viewset in [
 
 session_detail = views.ScheduleSessionViewSet.as_view({"patch": "partial_update", "delete": "destroy"})
 urlpatterns = [
+    path("public/schedules/", views.PublicScheduleView.as_view(), name="public-schedules"),
+    path("public/schedules/<int:schedule_id>/", views.PublicScheduleView.as_view(), name="public-schedule-detail"),
     path("batch-import/", views.BatchImportView.as_view(), name="batch-import"),
     path("auth/session/", auth_views.session_view, name="auth-session"),
     path("auth/login/", auth_views.login_view, name="auth-login"),

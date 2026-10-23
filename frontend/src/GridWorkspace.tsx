@@ -224,7 +224,7 @@ function parseLesson(value: string) {
   throw new Error(`Formato da célula não reconhecido: "${value.slice(0, 50)}". Informe:\nLinha 1: Disciplina\nLinha 2: Professor - Sala`);
 }
 
-export default function GridWorkspace({ onSetup, onOpenOffers, onOpenTimeProfiles, initialScheduleId }: { onSetup?: () => void; onOpenOffers?: () => void; onOpenTimeProfiles?: () => void; initialScheduleId?: number | null }) {
+export default function GridWorkspace({ onSetup, onOpenOffers, onOpenTimeProfiles, initialScheduleId, canPublish = false }: { onSetup?: () => void; onOpenOffers?: () => void; onOpenTimeProfiles?: () => void; initialScheduleId?: number | null; canPublish?: boolean }) {
   const [schedules, setSchedules] = useState<RecordItem[]>([]);
   const [scheduleId, setScheduleId] = useState<number | null>(null);
   const [grid, setGrid] = useState<Grid | null>(null);
@@ -242,6 +242,7 @@ export default function GridWorkspace({ onSetup, onOpenOffers, onOpenTimeProfile
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
+  const currentSchedule = schedules.find((item) => item.id === scheduleId);
 
   // Setup Form
   const [institution, setInstitution] = useState('');
@@ -251,6 +252,7 @@ export default function GridWorkspace({ onSetup, onOpenOffers, onOpenTimeProfile
   const [startsOn, setStartsOn] = useState('');
   const [endsOn, setEndsOn] = useState('');
   const [groupsText, setGroupsText] = useState('');
+  const [groupPeriod, setGroupPeriod] = useState('');
   const [profileId, setProfileId] = useState('');
   const [profiles, setProfiles] = useState<RecordItem[]>([]);
   const [slotsText, setSlotsText] = useState('17:50-18:50\n18:50-19:50\n19:50-20:50\n20:50-21:50');
@@ -442,6 +444,7 @@ export default function GridWorkspace({ onSetup, onOpenOffers, onOpenTimeProfile
           starts_on: startsOn,
           ends_on: endsOn,
           groups: groupsText.split(/[\n,;]/).map((item) => item.trim()).filter(Boolean),
+          group_period: Number(groupPeriod),
           time_profile_id: Number(profileId),
           slots,
           weekdays: hasProfileWindows ? [] : weekdays
@@ -471,6 +474,17 @@ export default function GridWorkspace({ onSetup, onOpenOffers, onOpenTimeProfile
       setScheduleId(rows[0]?.id ?? null);
       setDeleteOpen(false);
       setNotice('Grade excluída. As turmas e ofertas continuam disponíveis para criar outra grade.');
+    } catch (reason) { setError(errorText(reason)); }
+    finally { setBusy(false); }
+  }
+
+  async function setPublication(publish: boolean) {
+    if (!grid) return;
+    setBusy(true); setError('');
+    try {
+      await api(`schedules/${grid.id}/${publish ? 'publish' : 'unpublish'}/`, { method: 'POST', headers: { 'If-Match': String(grid.revision) }, body: '{}' });
+      await Promise.all([loadSchedules(), loadGrid(grid.id)]);
+      setNotice(publish ? 'Grade publicada. Os alunos já podem consultar o horário no link público.' : 'Publicação retirada. Esta grade não aparece mais na consulta pública.');
     } catch (reason) { setError(errorText(reason)); }
     finally { setBusy(false); }
   }
@@ -976,6 +990,8 @@ export default function GridWorkspace({ onSetup, onOpenOffers, onOpenTimeProfile
 
               {/* View Switcher & Action Tools */}
               <div className="sheet-tools">
+                {currentSchedule?.published_version ? <><a className="button small" href={`/horarios?grade=${grid.id}`} target="_blank" rel="noopener noreferrer">Ver horário público</a>{canPublish && <button type="button" className="button small ghost" disabled={busy} onClick={() => void setPublication(false)}>Retirar publicação</button>}</> : null}
+                {canPublish && <button type="button" className="button small primary" disabled={busy || !grid.sessions.length} onClick={() => void setPublication(true)}>{currentSchedule?.published_version ? 'Republicar alterações' : 'Publicar horário'}</button>}
                 <div className="sheet-toggle" role="group" aria-label="Modo de visualização da grade">
                   <button
                     type="button"
@@ -1257,6 +1273,7 @@ export default function GridWorkspace({ onSetup, onOpenOffers, onOpenTimeProfile
                     placeholder={'1º A\n1º C\n2º A\n3º A'}
                   />
                 </label>
+                <label className="form-field">Período curricular destas turmas<select required value={groupPeriod} onChange={(event) => setGroupPeriod(event.target.value)}><option value="">Selecione…</option>{Array.from({ length: 10 }, (_, index) => index + 1).map((value) => <option key={value} value={value}>{value}º período</option>)}</select></label>
                 {!hasProfileWindows && <label className="form-field wide">
                   Faixas de horário (uma por linha, formato HH:MM-HH:MM)
                   <textarea

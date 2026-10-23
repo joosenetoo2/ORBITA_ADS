@@ -25,7 +25,7 @@ class CatalogFlowTests(TestCase):
         setup = self.client.post("/api/v1/schedules/quick-setup/", {
             "institution": "Faculdade", "course_code": "ADS", "course_name": "ADS",
             "term": "2027.1", "starts_on": "2027-01-01", "ends_on": "2027-06-30",
-            "groups": ["1º A"], "time_profile_id": self.night.pk, "weekdays": [1, 2, 3, 4, 5],
+            "groups": ["1º A"], "group_period": 1, "time_profile_id": self.night.pk, "weekdays": [1, 2, 3, 4, 5],
             "slots": [{"start": "17:50", "end": "18:50"}, {"start": "18:50", "end": "19:50"}, {"start": "19:50", "end": "20:50"}],
         }, format="json")
         self.assertEqual(setup.status_code, 201, setup.data)
@@ -153,3 +153,13 @@ class CatalogFlowTests(TestCase):
         self.assertEqual(repeated.status_code, 400, repeated.data)
         self.assertEqual(SubjectOffering.objects.count(), 1)
         self.assertEqual(list(SessionRequirement.objects.values_list("duration_minutes", "weekly_count")), [(120, 2)])
+
+    def test_offering_rejects_subject_from_another_curricular_period(self):
+        course = Course.objects.create(institution=self.institution, code="ADS", name="ADS")
+        term = AcademicTerm.objects.create(institution=self.institution, name="2027.1", starts_on="2027-01-01", ends_on="2027-06-30")
+        group = ClassGroup.objects.create(course=course, term=term, code="P2", period_number=2, time_profile=self.night)
+        subject = Subject.objects.create(institution=self.institution, code="ALG", name="Algoritmos", credits=2, onsite_weekly_hours=2, period_number=1)
+        teacher = Teacher.objects.create(institution=self.institution, code="ANA", name="Ana")
+        response = self.client.post(f"/api/v1/subjects/{subject.pk}/offer/", {"group_id": group.pk, "teacher_id": teacher.pk}, format="json")
+        self.assertEqual(response.status_code, 400, response.data)
+        self.assertEqual(SubjectOffering.objects.count(), 0)
