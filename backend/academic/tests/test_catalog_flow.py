@@ -2,7 +2,7 @@ from django.contrib.auth import get_user_model
 from django.test import TestCase
 from rest_framework.test import APIClient
 
-from academic.models import ClassGroup, Institution, SessionRequirement, Subject, SubjectOffering, Teacher
+from academic.models import AcademicTerm, ClassGroup, Course, Institution, SessionRequirement, Subject, SubjectOffering, Teacher
 
 
 class CatalogFlowTests(TestCase):
@@ -61,3 +61,18 @@ class CatalogFlowTests(TestCase):
         self.assertEqual(imported.status_code, 200, imported.data)
         self.assertEqual(imported.data["created"], 2)
         self.assertTrue(all(value is None for value in Teacher.objects.values_list("max_weekly_minutes", flat=True)))
+
+    def test_batch_offerings_resolve_group_within_selected_term(self):
+        course = Course.objects.create(institution=self.institution, code="ADS", name="ADS")
+        term = AcademicTerm.objects.create(institution=self.institution, name="2027.1", starts_on="2027-01-01", ends_on="2027-06-30")
+        ClassGroup.objects.create(course=course, term=term, code="P1", name="1º período A")
+        Subject.objects.create(institution=self.institution, code="OO", name="Programação OO", credits=4,
+                               onsite_weekly_hours=4, total_workload=80)
+        Teacher.objects.create(institution=self.institution, code="ANA", name="Ana")
+        response = self.client.post("/api/v1/batch-import/", {"resource": "offerings", "term_id": term.pk, "rows": [
+            {"group_code": "P1", "subject_code": "OO", "teacher_code": "ANA", "block_hours": 2},
+        ]}, format="json")
+        self.assertEqual(response.status_code, 200, response.data)
+        self.assertEqual(response.data["created"], 1)
+        self.assertEqual(SubjectOffering.objects.count(), 1)
+        self.assertEqual(list(SessionRequirement.objects.values_list("duration_minutes", "weekly_count")), [(120, 2)])

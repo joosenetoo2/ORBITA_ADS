@@ -22,7 +22,7 @@ import { api, listAll, type RecordItem } from './api';
 import { matchesSearch } from './textUtils';
 import './grid.css';
 
-type Group = { id: number; code: string };
+type Group = { id: number; code: string; name: string };
 type Slot = { id: number; start: string; end: string };
 type Session = { id: number; group_id: number; weekday: number; start: string; end: string; subject: string; teacher: string; room: string; is_locked?: boolean };
 type Grid = { id: number; revision: number; course: string; term: string; institution: string; weekdays: number[]; groups: Group[]; slots: Slot[]; sessions: Session[] };
@@ -238,7 +238,7 @@ export default function GridWorkspace({ onSetup }: { onSetup?: () => void }) {
   const visibleGroups = useMemo(() => {
     if (!grid) return [];
     if (!searchTerm.trim()) return grid.groups;
-    return grid.groups.filter((g) => matchesSearch(g.code, searchTerm));
+    return grid.groups.filter((g) => matchesSearch(`${g.name} ${g.code}`, searchTerm));
   }, [grid, searchTerm]);
 
   const visibleTeachers = useMemo(() => {
@@ -488,7 +488,7 @@ export default function GridWorkspace({ onSetup }: { onSetup?: () => void }) {
   function gridTable(owner: Group | string) {
     if (!grid) return null;
     const isGroup = typeof owner !== 'string';
-    const ownerTitle = isGroup ? owner.code : owner;
+    const ownerTitle = isGroup ? (owner.name || owner.code) : owner;
 
     return (
       <div className="sheet-wrap" key={isGroup ? owner.id : owner}>
@@ -573,7 +573,7 @@ export default function GridWorkspace({ onSetup }: { onSetup?: () => void }) {
                                 ? 'Aula com horário fixado/bloqueado. Clique para editar ou desbloquear.'
                                 : isGroup
                                 ? 'Clique para editar aula ou arraste para outro horário'
-                                : `${session.subject} (${group?.code})`
+                                : `${session.subject} (${group?.name || group?.code})`
                             }
                           >
                             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px', maxWidth: '100%' }}>
@@ -595,7 +595,7 @@ export default function GridWorkspace({ onSetup }: { onSetup?: () => void }) {
                               ) : (
                                 <>
                                   <Users size={12} />
-                                  <span>{group?.code}</span>
+                                  <span>{group?.name || group?.code}</span>
                                   <DoorOpen size={12} style={{ marginLeft: 4 }} />
                                   <span>{session.room}</span>
                                 </>
@@ -607,7 +607,7 @@ export default function GridWorkspace({ onSetup }: { onSetup?: () => void }) {
                             type="button"
                             className="sheet-empty"
                             onClick={() => openCell(owner.id, day, slot)}
-                            aria-label={`Adicionar aula em ${owner.code}, ${days[day - 1]}, às ${slot.start}`}
+                            aria-label={`Adicionar aula em ${owner.name || owner.code}, ${days[day - 1]}, às ${slot.start}`}
                             title={`Adicionar aula em ${days[day - 1]}, ${slot.start}`}
                           >
                             +
@@ -1077,7 +1077,7 @@ export default function GridWorkspace({ onSetup }: { onSetup?: () => void }) {
               <div>
                 <span className="eyebrow">DETALHES DA AULA</span>
                 <h2 id="cell-title">
-                  {grid.groups.find((item) => item.id === editor.group_id)?.code} · {days[editor.weekday - 1]} às {grid.slots.find((item) => item.id === editor.slot_id)?.start}
+                  {grid.groups.find((item) => item.id === editor.group_id)?.name || grid.groups.find((item) => item.id === editor.group_id)?.code} · {days[editor.weekday - 1]} às {grid.slots.find((item) => item.id === editor.slot_id)?.start}
                 </h2>
               </div>
               <button className="icon-button" onClick={() => setEditor(null)} aria-label="Fechar modal">

@@ -3,6 +3,7 @@ from datetime import date
 from django.core.exceptions import ValidationError as DjangoValidationError
 from django.db import transaction
 from django.db.models import F
+from django.db.models.deletion import ProtectedError
 from django.shortcuts import get_object_or_404
 from rest_framework import status, viewsets
 from rest_framework.decorators import action
@@ -19,7 +20,32 @@ from .catalog_flow import offer_subject
 
 class AcademicViewSet(viewsets.ModelViewSet):
     permission_classes = [AcademicPermission]
-    http_method_names = ["get", "post", "patch", "head", "options"]
+    http_method_names = ["get", "post", "patch", "delete", "head", "options"]
+
+    def destroy(self, request, *args, **kwargs):
+        instance = self.get_object()
+        if isinstance(instance, models.Institution):
+            raise ValidationError({"message": "A instituição principal não pode ser excluída."})
+        try:
+            with transaction.atomic():
+                entity_name = instance.__class__.__name__
+                item_name = str(getattr(instance, "name", getattr(instance, "code", instance.pk)))
+                self.perform_destroy(instance)
+                models.AuditEvent.objects.create(
+                    actor=request.user,
+                    action=f"{entity_name.upper()}_DELETED",
+                    entity=entity_name,
+                    entity_id=str(kwargs.get("pk", instance.pk)),
+                    metadata={"name": item_name},
+                )
+        except ProtectedError as err:
+            related_objects = err.protected_objects
+            rel_names = {obj.__class__._meta.verbose_name for obj in related_objects}
+            rel_str = ", ".join(sorted(rel_names)) if rel_names else "outros cadastros vinculados"
+            raise ValidationError({
+                "message": f"Não é possível excluir este item pois ele possui vínculos ativos ({rel_str}). Remova os vínculos primeiro."
+            })
+        return Response(status=status.HTTP_204_NO_CONTENT)
 
 
 def viewset_for(model, serializer, *, admin_only=False):
@@ -93,6 +119,8 @@ class BatchImportView(APIView):
         if resource == "class-groups":
             group_course = get_object_or_404(models.Course, pk=request.data.get("course_id"), institution=institution)
             group_term = get_object_or_404(models.AcademicTerm, pk=request.data.get("term_id"), institution=institution)
+        elif resource == "offerings":
+            group_term = get_object_or_404(models.AcademicTerm, pk=request.data.get("term_id"), institution=institution)
         created = skipped = updated = 0
         with transaction.atomic():
             for index, row in enumerate(rows, 1):
@@ -136,9 +164,11 @@ class BatchImportView(APIView):
                             skipped += 1; continue
                         obj = models.ClassGroup(course=group_course, term=group_term, code=code, name=name or code)
                     else:
-                        group = get_object_or_404(models.ClassGroup, term__institution=institution, code__iexact=str(row.get("group_code", "")).strip())
-                        subject = get_object_or_404(models.Subject, institution=institution, code__iexact=str(row.get("subject_code", "")).strip())
-                        teacher = get_object_or_404(models.Teacher, institution=institution, code__iexact=str(row.get("teacher_code", "")).strip())
+                        group = models.ClassGroup.objects.filter(term=group_term, code__iexact=str(row.get("group_code", "")).strip()).first()
+                        subject = models.Subject.objects.filter(institution=institution, code__iexact=str(row.get("subject_code", "")).strip()).first()
+                        teacher = models.Teacher.objects.filter(institution=institution, code__iexact=str(row.get("teacher_code", "")).strip()).first()
+                        if not group or not subject or not teacher:
+                            raise ValidationError({"offering": "Turma, disciplina ou professor não encontrado pelos códigos informados."})
                         _, was_created = offer_subject(subject, group, teacher, row.get("block_hours", 2))
                         if was_created: created += 1
                         else: updated += 1
@@ -161,6 +191,30 @@ class SafeTimeConfigurationMixin:
 
     def partial_update(self, request, *args, **kwargs):
         return self._change(request, instance=self.get_object())
+
+    def destroy(self, request, *args, **kwargs):
+        instance = self.get_object()
+        institution = getattr(instance, "institution", None)
+        if institution:
+            sessions = list(models.ScheduledSession.objects.filter(schedule__course__institution=institution).select_related(
+                "schedule", "requirement__offering__group__course", "requirement__offering__subject", "teacher", "room"
+            ))
+            before = {item.pk: {conflict["code"] for conflict in validate_session(item)} & {"OUTSIDE_WINDOW", "TIME_BLOCK"} for item in sessions}
+            with transaction.atomic():
+                instance.delete()
+                affected = [item.pk for item in sessions if ({conflict["code"] for conflict in validate_session(item)} & {"OUTSIDE_WINDOW", "TIME_BLOCK"}) - before[item.pk]]
+                if affected:
+                    transaction.set_rollback(True)
+                    return Response({"code": "CONFIGURATION_AFFECTS_SESSIONS", "message": "A exclusão invalidaria horários de aulas já alocadas na grade.", "affected_session_ids": affected}, status=status.HTTP_409_CONFLICT)
+                models.AuditEvent.objects.create(
+                    actor=request.user,
+                    action=f"{instance.__class__.__name__.upper()}_DELETED",
+                    entity=instance.__class__.__name__,
+                    entity_id=str(kwargs.get("pk", instance.pk)),
+                    metadata={"name": str(getattr(instance, "name", instance.pk))},
+                )
+            return Response(status=status.HTTP_204_NO_CONTENT)
+        return super().destroy(request, *args, **kwargs)
 
     def _change(self, request, instance=None):
         serializer = self.get_serializer(instance, data=request.data, partial=instance is not None)
@@ -321,7 +375,7 @@ class ScheduleViewSet(AcademicViewSet):
             "id": schedule.pk, "revision": schedule.revision, "course": schedule.course.name, "term": schedule.term.name,
             "institution": schedule.course.institution.name,
             "weekdays": list(models.TimeWindow.objects.filter(institution=schedule.course.institution, scope=models.Scope.COURSE, scope_id=schedule.course_id, is_active=True).values_list("weekday", flat=True).distinct().order_by("weekday")),
-            "groups": [{"id": group.pk, "code": group.code} for group in groups],
+            "groups": [{"id": group.pk, "code": group.code, "name": group.name} for group in groups],
             "slots": [{"id": slot.pk, "start": slot.starts_at.strftime("%H:%M"), "end": slot.ends_at.strftime("%H:%M")} for slot in schedule.slots.all()],
             "sessions": [{"id": item.pk, "group_id": item.requirement.offering.group_id, "weekday": item.weekday,
                           "start": item.starts_at.strftime("%H:%M"), "end": item.ends_at.strftime("%H:%M"),

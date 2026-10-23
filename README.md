@@ -8,6 +8,10 @@ A aplicação abre diretamente na grade semanal, seguindo a [forma de trabalho d
 
 Para uma grade criada antes deste editor: abra **Grade de aulas** no menu. Se as turmas aparecerem sem linhas de horário, use **Configurar horários** na própria grade. Depois clique no botão **+** no cruzamento da turma, dia e horário desejados. Os campos da aula sugerem as disciplinas, professores e salas já cadastrados.
 
+As aulas de várias faixas aparecem como blocos únicos. Arraste um bloco para outro dia ou horário livre **da mesma turma**. O sistema valida professor, sala e turma ao soltar; se houver conflito, a aula permanece no local original. O formulário do bloco também permite mudar dia e horário por teclado ou toque.
+
+Em **Cadastros**, disciplinas usam créditos, horas presenciais semanais e percentual EAD. Cada crédito representa 1 hora-aula semanal de 60 minutos e 20 horas-aula totais: 4 créditos correspondem a 80 horas totais. As horas presenciais são informadas separadamente e apenas elas entram na grade. A ação **Ofertar · professor** liga disciplina, turma e docente e prepara automaticamente os blocos semanais; não é necessário cadastrar “encontros requeridos”. Em **Importar em lote**, é possível carregar CSV/TSV ou colar linhas para cursos, disciplinas, professores, salas, turmas e ofertas. **Regras de horário** agrupa as janelas por perfil.
+
 ## Requisitos
 
 - Python 3.11 ou superior
@@ -31,9 +35,9 @@ Para uma avaliação local no Windows sem PostgreSQL, execute `backend/run-local
 
 Os endpoints de dados começam em `/api/v1/` e exigem sessão autenticada. `/api/v1/auth/session/`, `/api/v1/auth/login/` e `/api/v1/auth/logout/` cuidam da entrada e saída; login e saída exigem token CSRF. Grupos Django reconhecidos: `Administrador`, `Coordenador` e `Colaborador acadêmico`; superusuários possuem acesso de escrita. Crie os grupos pelo Admin antes de atribuir usuários. Configurações de instituição e janelas exigem `Administrador`. Escritas comuns são permitidas aos três grupos. Exclusão física de cadastros está desativada na API.
 
-Recursos iniciais: instituição, períodos, cursos, disciplinas, matrizes, professores, salas, turmas, ofertas, requisitos de encontros, perfis/janelas/bloqueios e grades. Em `/api/v1/schedules/{id}/sessions/`, a escrita exige `If-Match` com a revisão atual da grade; a resposta inclui `session` e a nova `revision`. `POST /api/v1/schedules/{id}/sessions/preview/` verifica uma alocação sem salvá-la. A validação verifica duração, janelas, bloqueios, elegibilidade, capacidade, recursos, limite semanal docente e conflitos de professor/sala/turma no mesmo período letivo. Use `/api/v1/schedules/{id}/validate/` para avaliar o rascunho. Alterações em perfis, janelas e bloqueios que invalidariam alocações existentes são recusadas com os IDs afetados.
+Recursos iniciais: instituição, períodos, cursos, disciplinas, matrizes, professores, salas, turmas, ofertas, requisitos internos de encontros, perfis/janelas/bloqueios e grades. A importação em lote usa `POST /api/v1/batch-import/` e é transacional. A ação `POST /api/v1/subjects/{id}/offer/` cria ou atualiza a oferta e seus blocos presenciais. Em `/api/v1/schedules/{id}/sessions/`, a escrita exige `If-Match` com a revisão atual da grade; a resposta inclui `session` e a nova `revision`. `POST /api/v1/schedules/{id}/sessions/preview/` verifica uma alocação sem salvá-la. A validação verifica duração, janelas, bloqueios, elegibilidade, capacidade, recursos e conflitos de professor/sala/turma no mesmo período letivo. Use `/api/v1/schedules/{id}/validate/` para avaliar o rascunho. Alterações em perfis, janelas e bloqueios que invalidariam alocações existentes são recusadas com os IDs afetados.
 
-Na interface, um encontro pode ser aberto para edição por formulário ou arrastado para outro dia da semana. O arraste mantém o horário e os recursos, abre uma prévia e exige confirmação explícita. A edição por formulário permite alterar dia, horário, professor e sala sem usar arrastar e soltar.
+Na interface principal, o bloco pode ser aberto para edição ou arrastado para uma célula livre da mesma turma. A gravação do arraste é validada pela API e revertida quando houver conflito. O editor detalhado legado continua disponível para ajustes avançados.
 
 ## Verificação
 

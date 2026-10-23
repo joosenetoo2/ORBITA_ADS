@@ -555,6 +555,19 @@ a:hover {
   border-color: var(--color-destructive);
 }
 
+.button.danger.ghost {
+  background: transparent;
+  color: var(--color-destructive);
+  border-color: transparent;
+  box-shadow: none;
+}
+
+.button.danger.ghost:hover {
+  background: var(--color-destructive-bg);
+  color: var(--color-destructive);
+  border-color: var(--color-destructive-border);
+}
+
 .button.small {
   min-height: 36px;
   padding: 0 14px;

@@ -1,0 +1,32 @@
+﻿codigo;nome;creditos;horas_presenciais;ead_percentual
+ARQCOMP;Arquitetura e Organização de Computadores;3;2;33
+ENGREQ;Engenharia de Requisitos;2;2;0
+FUNDLOG;Fundamentos Matemáticos e Lógica para Programação;4;4;0
+INGLES;Inglês Instrumental;3;2;33
+PROGEST;Programação Estruturada;6;6;0
+ELETIVA1;Eletiva I;3;2;33
+ENGSOFT;Engenharia de Software;2;2;0
+EXT1;Extensão I;4;1;0
+FUNDADM;Fundamentos de Administração e Finanças;3;3;0
+POO;Programação Orientada a Objetos;6;6;0
+DIRHUM;Direitos Humanos, Responsabilidade Social e Cidadania;2;2;0
+BD1;Banco de Dados I;4;4;0
+WEB1;Desenvolvimento Web I;4;4;0
+ESTRDAD;Estruturas de Dados e Algoritmos;4;4;0
+EXT2;Extensão II;4;1;0
+LABRED;Laboratório de Redes de Computadores;4;3;25
+BD2;Banco de Dados II;3;3;0
+MOBILE;Desenvolvimento Mobile;2;2;0
+WEB2;Desenvolvimento Web II;4;4;0
+DESINTUX;Design de Interação e Experiência do Usuário;3;2;33
+ELETIVA2;Eletiva II;2;2;0
+EXT3;Extensão III;4;1;0
+METAV;Métodos Avançados de Programação;2;2;0
+DIRDIG;Direito Digital e Segurança da Informação;3;2;33
+EMPINOV;Empreendedorismo e Inovação;2;2;0
+PROJBD;Projeto de Banco de Dados;2;2;0
+PROJENGSOFT;Projeto de Engenharia de Software;3;3;0
+PROJUX;Projeto UX;2;2;0
+PROJWEB;Projeto Web;2;2;0
+QUALTEST;Qualidade e Testes de Software;4;3;25
+ESTAGIO;Estágio Supervisionado;12;0;0

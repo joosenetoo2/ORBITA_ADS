@@ -55,3 +55,7 @@ export function create<T = RecordItem>(resource: string, data: Record<string, un
 export function update<T = RecordItem>(resource: string, id: number, data: Record<string, unknown>): Promise<T> {
   return api<T>(`${resource}/${id}/`, { method: 'PATCH', body: JSON.stringify(data) });
 }
+
+export function remove(resource: string, id: number): Promise<void> {
+  return api<void>(`${resource}/${id}/`, { method: 'DELETE' });
+}
