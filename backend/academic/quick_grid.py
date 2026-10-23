@@ -163,8 +163,6 @@ def save_cell(schedule, data):
             if conflicts:
                 raise GridConflict(conflicts)
             return existing
-        if existing.requirement.kind != "GRADE":
-            raise ValidationError({"session_id": "Para esta aula cadastrada anteriormente, mantenha a disciplina e a duração. Professor, sala e dia podem ser alterados aqui."})
         old_requirement = existing.requirement
         existing.delete()
         reconcile(old_requirement)
@@ -183,24 +181,21 @@ def save_cell(schedule, data):
             for session in models.ScheduledSession.objects.filter(requirement__offering=offering).select_related("requirement")
         )
         if scheduled_minutes + duration > subject.onsite_weekly_hours * 60:
-            raise ValidationError({"offering": "Todas as horas presenciais semanais desta disciplina já foram alocadas. As horas EAD não entram na grade."})
-    planned = models.SessionRequirement.objects.filter(offering=offering, kind="AUTO_OFFER")
-    if planned.exists():
-        requirement = planned.filter(duration_minutes=duration).first()
-        if requirement is None:
-            raise ValidationError({"span": "Esta oferta não prevê um bloco com essa duração."})
-        occurrence = (models.ScheduledSession.objects.filter(requirement=requirement).aggregate(Max("occurrence"))["occurrence__max"] or 0) + 1
-        if occurrence > requirement.weekly_count:
-            raise ValidationError({"offering": "Todas as horas presenciais desta oferta já foram alocadas."})
+            raise ValidationError({"offering": f"Todas as {subject.onsite_weekly_hours}h presenciais semanais desta disciplina já foram alocadas."})
+
+    requirement = models.SessionRequirement.objects.filter(offering=offering, duration_minutes=duration).first()
+    if requirement is None:
+        requirement = models.SessionRequirement.objects.create(
+            offering=offering, duration_minutes=duration, weekly_count=1, kind="GRADE"
+        )
+        occurrence = 1
     else:
-        requirement = models.SessionRequirement.objects.filter(offering=offering, duration_minutes=duration, kind="GRADE").first()
-        if requirement is None:
-            requirement = models.SessionRequirement.objects.create(offering=offering, duration_minutes=duration, weekly_count=1, kind="GRADE")
-            occurrence = 1
-        else:
-            occurrence = (models.ScheduledSession.objects.filter(requirement=requirement).aggregate(Max("occurrence"))["occurrence__max"] or 0) + 1
+        current_used = models.ScheduledSession.objects.filter(requirement=requirement).count()
+        occurrence = current_used + 1
+        if occurrence > requirement.weekly_count:
             requirement.weekly_count = occurrence
             requirement.save(update_fields=["weekly_count"])
+
     session = models.ScheduledSession.objects.create(
         schedule=schedule, requirement=requirement, occurrence=occurrence, weekday=weekday,
         starts_at=chosen[0].starts_at, ends_at=chosen[-1].ends_at, teacher=teacher, room=room,

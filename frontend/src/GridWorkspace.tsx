@@ -30,12 +30,16 @@ type Grid = { id: number; revision: number; course: string; term: string; instit
 type ProfileStructure = { profiles: { id: number; name: string; windows: { weekday: number; start: string; end: string }[] }[]; weekdays: number[]; slots: { start: string; end: string }[] };
 type Cell = { group_id: number; weekday: number; slot_id: number; span: number; subject: string; teacher: string; room: string; session_id?: number; is_locked?: boolean };
 
-function getRoomDisplayName(roomIdentifier: string, roomList: RecordItem[]) {
+function getRoomDisplayName(roomIdentifier: string | number | undefined, roomList: RecordItem[]) {
   if (!roomIdentifier) return '';
+  const clean = String(roomIdentifier).trim().toLowerCase();
   const found = roomList.find(
-    (r) => r.name === roomIdentifier || r.code === roomIdentifier
+    (r) =>
+      String(r.name || '').trim().toLowerCase() === clean ||
+      String(r.code || '').trim().toLowerCase() === clean ||
+      String(r.id) === clean
   );
-  return found ? String(found.name || found.code) : roomIdentifier;
+  return found ? String(found.name || found.code) : String(roomIdentifier);
 }
 
 const days = ['Segunda', 'Terça', 'Quarta', 'Quinta', 'Sexta', 'Sábado', 'Domingo'];
@@ -270,15 +274,28 @@ export default function GridWorkspace({ onSetup, onOpenOffers, onOpenTimeProfile
     if (!grid || !editor || !cellOffering) return [];
     const start = grid.slots.findIndex((slot) => slot.id === editor.slot_id);
     if (start < 0) return [];
+
+    const original = grid.sessions.find((session) => session.id === editor.session_id);
+    const originalSpan = original ? sessionSpan(original) : 0;
+    const isSameEditingOffering = Boolean(original && original.subject === editor.subject);
+
+    const maxWeeklyHours = cellOffering.onsite_weekly_hours ?? 6;
+    const allocatedSpans = grid.sessions
+      .filter((s) => s.group_id === editor.group_id && s.subject === editor.subject)
+      .reduce((sum, s) => sum + sessionSpan(s), 0);
+    const effectiveRemainingHours = Math.max(0, maxWeeklyHours - allocatedSpans) + (isSameEditingOffering ? originalSpan : 0);
+
     return grid.slots.slice(start).map((_, index) => {
       const chosen = grid.slots.slice(start, start + index + 1);
       const contiguous = chosen.every((slot, offset) => slotAllowed(editor.weekday, slot.id) && (!offset || chosen[offset - 1].end === slot.start));
-      const [beginHour, beginMinute] = chosen[0].start.split(':').map(Number);
-      const [endHour, endMinute] = chosen[chosen.length - 1].end.split(':').map(Number);
-      const minutes = endHour * 60 + endMinute - beginHour * 60 - beginMinute;
-      const original = grid.sessions.find((session) => session.id === editor.session_id);
-      const available = cellOffering.blocks.some((block) => block.duration_minutes === minutes && (block.remaining > 0 || Boolean(original?.subject === editor.subject && editor.span === index + 1)));
-      return contiguous && available ? index + 1 : 0;
+      const spanCount = index + 1;
+
+      const fitsInSubject = spanCount <= maxWeeklyHours;
+      const fitsInRemaining = spanCount <= effectiveRemainingHours;
+      const isOriginal = Boolean(isSameEditingOffering && spanCount === originalSpan);
+
+      const available = fitsInSubject && (fitsInRemaining || isOriginal);
+      return contiguous && available ? spanCount : 0;
     }).filter(Boolean);
   }, [grid, editor, cellOffering]);
   useEffect(() => {
@@ -1267,7 +1284,14 @@ export default function GridWorkspace({ onSetup, onOpenOffers, onOpenTimeProfile
               <p className="sheet-helper">
                 Cada faixa da grade corresponde a 1 hora-aula de 60 minutos. A duração mostra apenas os blocos previstos na oferta que cabem no dia e horário escolhidos. A sala pode ser informada ao salvar.
               </p>
-              {cellOffering && <p className="sheet-helper">Blocos ainda previstos para esta oferta: {cellOffering.blocks.filter((block) => block.remaining > 0).map((block) => `${block.remaining} × ${block.duration_minutes / 60} h`).join(' · ') || 'nenhum'}. Para mudar a distribuição dos blocos, ajuste a oferta.</p>}
+              {cellOffering && (
+                <p className="sheet-helper">
+                  Carga presencial: {cellOffering.onsite_weekly_hours}h semanais · Alocado nesta turma:{' '}
+                  {grid.sessions
+                    .filter((s) => s.group_id === editor.group_id && s.subject === editor.subject)
+                    .reduce((sum, s) => sum + sessionSpan(s), 0)}h de {cellOffering.onsite_weekly_hours}h
+                </p>
+              )}
               {!cellOfferings.length && <p className="form-error">Esta turma ainda não tem disciplinas ofertadas. <button type="button" className="button small" onClick={() => { setEditor(null); onOpenOffers?.(); }}>Abrir ofertas</button></p>}
               {cellOffering && !availableSpans.length && <p className="form-error">Não há bloco presencial disponível que caiba a partir desta faixa. Escolha outra faixa ou disciplina.</p>}
 

@@ -206,7 +206,11 @@ const fieldsets: Record<Resource, Field[]> = {
     { key: 'code', required: true },
     { key: 'name', required: true }
   ],
-  'subject-offerings': [],
+  'subject-offerings': [
+    { key: 'group', source: 'class-groups', required: true },
+    { key: 'subject', source: 'subjects', required: true },
+    { key: 'eligible_teachers', source: 'teachers', multiple: true, required: true },
+  ],
   'session-requirements': [],
   'time-profiles': [
     { key: 'institution', source: 'institutions', required: true },

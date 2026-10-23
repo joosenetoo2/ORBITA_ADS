@@ -411,15 +411,23 @@ class ScheduleViewSet(AcademicViewSet):
 
     @staticmethod
     def _grid_blocks(offer):
-        requirements = list(offer.requirements.all())
-        planned = [item for item in requirements if item.kind == "AUTO_OFFER"]
-        if planned:
-            return [{"duration_minutes": item.duration_minutes,
-                     "remaining": max(0, item.weekly_count - models.ScheduledSession.objects.filter(requirement=item).count())}
-                    for item in planned]
-        used = sum(item.requirement.duration_minutes for item in models.ScheduledSession.objects.filter(requirement__offering=offer).select_related("requirement"))
-        available = None if offer.subject.onsite_weekly_hours is None else max(0, offer.subject.onsite_weekly_hours * 60 - used)
-        return [{"duration_minutes": hours * 60, "remaining": 1 if available is None or available >= hours * 60 else 0} for hours in range(1, 5)]
+        used = sum(
+            item.requirement.duration_minutes
+            for item in models.ScheduledSession.objects.filter(requirement__offering=offer).select_related("requirement")
+        )
+        onsite = offer.subject.onsite_weekly_hours
+        max_weekly_hours = onsite if onsite is not None else 6
+        remaining_minutes = max(0, max_weekly_hours * 60 - used)
+        max_possible_hours = min(max_weekly_hours, 6)
+        return [
+            {
+                "duration_minutes": hours * 60,
+                "remaining": 1 if remaining_minutes >= hours * 60 else 0,
+                "total_weekly_hours": max_weekly_hours,
+                "remaining_minutes": remaining_minutes,
+            }
+            for hours in range(1, max_possible_hours + 1)
+        ]
 
     @action(detail=False, methods=["post"], url_path="from-offerings")
     def from_offerings(self, request):
