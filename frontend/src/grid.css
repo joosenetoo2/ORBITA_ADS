@@ -268,6 +268,53 @@
   font-style: italic;
 }
 
+/* Teacher Color Legend Bar */
+.sheet-legend-bar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px dashed var(--color-border-subtle, #e2e8f0);
+  flex-wrap: wrap;
+}
+
+.legend-label {
+  font-size: 11.5px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--color-text-muted, #64748b);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.legend-pills {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.legend-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 10px;
+  border-radius: 4px;
+  font-size: 12px;
+  font-weight: 600;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.12);
+  user-select: none;
+  transition: transform 0.15s ease, filter 0.15s ease;
+}
+
+.legend-pill:hover {
+  transform: translateY(-1px);
+  filter: brightness(1.08);
+}
+
 /* Timetable Container Card */
 .sheet-wrap {
   margin-bottom: 28px;

@@ -24,8 +24,21 @@ import './grid.css';
 
 type Group = { id: number; code: string; name: string };
 type Slot = { id: number; start: string; end: string };
-type Session = { id: number; group_id: number; weekday: number; start: string; end: string; subject: string; teacher: string; room: string; room_code?: string; is_locked?: boolean };
-type Offering = { id: number; group_id: number; subject: string; onsite_weekly_hours: number; teachers: { id: number; name: string }[]; blocks: { duration_minutes: number; remaining: number }[] };
+type Session = {
+  id: number;
+  group_id: number;
+  weekday: number;
+  start: string;
+  end: string;
+  subject: string;
+  teacher: string;
+  teacher_id?: number;
+  teacher_color?: string;
+  room: string;
+  room_code?: string;
+  is_locked?: boolean;
+};
+type Offering = { id: number; group_id: number; subject: string; onsite_weekly_hours: number; teachers: { id: number; name: string; color?: string }[]; blocks: { duration_minutes: number; remaining: number }[] };
 type Grid = { id: number; revision: number; course: string; term: string; institution: string; time_profile: number | null; time_profile_name: string; weekdays: number[]; profiles_active: boolean; profile_slots_in_sync: boolean; available_slot_ids_by_day: Record<string, number[]>; groups: Group[]; offerings: Offering[]; slots: Slot[]; sessions: Session[] };
 type ProfileStructure = { profiles: { id: number; name: string; windows: { weekday: number; start: string; end: string }[] }[]; weekdays: number[]; slots: { start: string; end: string }[] };
 type Cell = { group_id: number; weekday: number; slot_id: number; span: number; subject: string; teacher: string; room: string; session_id?: number; is_locked?: boolean };
@@ -46,20 +59,45 @@ const days = ['Segunda', 'Terça', 'Quarta', 'Quinta', 'Sexta', 'Sábado', 'Domi
 const dayAbbrs = ['SEG', 'TER', 'QUA', 'QUI', 'SEX', 'SÁB', 'DOM'];
 
 const paletteList = [
-  { bg: '#1e3a5f', border: '#60a5fa', text: '#ffffff' },
-  { bg: '#065f46', border: '#34d399', text: '#ffffff' },
-  { bg: '#581c87', border: '#c084fc', text: '#ffffff' },
-  { bg: '#831843', border: '#f472b6', text: '#ffffff' },
-  { bg: '#1e293b', border: '#94a3b8', text: '#ffffff' },
-  { bg: '#78350f', border: '#fbbf24', text: '#ffffff' },
-  { bg: '#164e63', border: '#22d3ee', text: '#ffffff' },
-  { bg: '#3730a3', border: '#818cf8', text: '#ffffff' },
-  { bg: '#854d0e', border: '#facc15', text: '#ffffff' },
+  { bg: '#2563eb', border: '#93c5fd', text: '#ffffff' }, // Azul
+  { bg: '#059669', border: '#6ee7b7', text: '#ffffff' }, // Esmeralda
+  { bg: '#7c3aed', border: '#c4b5fd', text: '#ffffff' }, // Roxo
+  { bg: '#ea580c', border: '#fdba74', text: '#ffffff' }, // Laranja
+  { bg: '#db2777', border: '#f9a8d4', text: '#ffffff' }, // Rosa
+  { bg: '#0891b2', border: '#67e8f9', text: '#ffffff' }, // Ciano
+  { bg: '#4338ca', border: '#a5b4fc', text: '#ffffff' }, // Índigo
+  { bg: '#d97706', border: '#fcd34d', text: '#ffffff' }, // Âmbar
+  { bg: '#15803d', border: '#86efac', text: '#ffffff' }, // Verde
+  { bg: '#831843', border: '#f472b6', text: '#ffffff' }, // Carmim
+  { bg: '#334155', border: '#94a3b8', text: '#ffffff' }, // Ardósia
+  { bg: '#78350f', border: '#fde047', text: '#ffffff' }, // Marrom
 ];
 
-function paletteFor(value: string) {
+function getTeacherPalette(color: string | undefined, teacherName: string): { bg: string; border: string; text: string } {
+  const cleanColor = (color || '').trim();
+  if (cleanColor && /^#([0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/.test(cleanColor)) {
+    let hex = cleanColor.slice(1);
+    if (hex.length === 3) {
+      hex = hex.split('').map((c) => c + c).join('');
+    }
+    const r = parseInt(hex.slice(0, 2), 16);
+    const g = parseInt(hex.slice(2, 4), 16);
+    const b = parseInt(hex.slice(4, 6), 16);
+    const yiq = (r * 299 + g * 587 + b * 114) / 1000;
+    const textColor = yiq >= 155 ? '#0f172a' : '#ffffff';
+    const borderColor = yiq >= 155
+      ? `rgb(${Math.max(0, r - 60)}, ${Math.max(0, g - 60)}, ${Math.max(0, b - 60)})`
+      : `rgb(${Math.min(255, r + 75)}, ${Math.min(255, g + 75)}, ${Math.min(255, b + 75)})`;
+    return {
+      bg: `#${hex}`,
+      border: borderColor,
+      text: textColor
+    };
+  }
+
+  // Fallback: cor estável agrupada pelo nome do professor
   let hash = 0;
-  for (const char of value) hash = (hash * 31 + char.charCodeAt(0)) >>> 0;
+  for (const char of (teacherName || '')) hash = (hash * 31 + char.charCodeAt(0)) >>> 0;
   return paletteList[hash % paletteList.length];
 }
 
@@ -224,6 +262,7 @@ export default function GridWorkspace({ onSetup, onOpenOffers, onOpenTimeProfile
   const [pasteDay, setPasteDay] = useState(1);
   const [pasteSlot, setPasteSlot] = useState(0);
   const [rooms, setRooms] = useState<RecordItem[]>([]);
+  const [teachersList, setTeachersList] = useState<RecordItem[]>([]);
   const [profileWindows, setProfileWindows] = useState<RecordItem[]>([]);
   const hasProfileWindows = profileWindows.some((window) => window.is_active && Number(window.profile) === Number(profileId));
 
@@ -253,9 +292,10 @@ export default function GridWorkspace({ onSetup, onOpenOffers, onOpenTimeProfile
   }, [loadSchedules]);
 
   useEffect(() => {
-    void Promise.all([listAll('rooms'), listAll('time-profiles'), listAll('time-windows')])
-      .then(([roomRows, profiles, windows]) => {
+    void Promise.all([listAll('rooms'), listAll('teachers'), listAll('time-profiles'), listAll('time-windows')])
+      .then(([roomRows, teacherRows, profiles, windows]) => {
         setRooms(roomRows);
+        setTeachersList(teacherRows);
         setProfiles(profiles.filter((profile) => profile.is_active));
         setProfileId((current) => current || String(profiles.find((profile) => profile.is_active)?.id ?? ''));
         setProfileWindows(windows);
@@ -709,7 +749,11 @@ export default function GridWorkspace({ onSetup, onOpenOffers, onOpenTimeProfile
                     const span = session ? Math.max(1, grid.slots.slice(rowIndex).filter((item) => item.start >= session.start && item.end <= session.end).length) : 1;
                     const group = grid.groups.find((item) => item.id === session?.group_id);
                     const hoverKey = `${isGroup ? owner.id : ''}:${day}:${slot.id}`;
-                    const palette = session ? paletteFor(session.subject) : null;
+                    const teacherColor = session
+                      ? session.teacher_color ||
+                        teachersList.find((t) => String(t.name || '').trim().toLowerCase() === session.teacher.trim().toLowerCase())?.color
+                      : undefined;
+                    const palette = session ? getTeacherPalette(teacherColor as string | undefined, session.teacher) : null;
 
                     return (
                       <td
@@ -736,7 +780,8 @@ export default function GridWorkspace({ onSetup, onOpenOffers, onOpenTimeProfile
                             style={{
                               backgroundColor: palette?.bg,
                               minHeight: `${64 * span}px`,
-                              borderLeft: `5px solid ${palette?.border}`
+                              borderLeft: `5px solid ${palette?.border}`,
+                              color: palette?.text
                             }}
                             onDragStart={isGroup && !session.is_locked ? (event) => startDrag(event, session) : undefined}
                             onDragEnd={() => { setDragged(null); setDragHover(''); }}
@@ -745,19 +790,24 @@ export default function GridWorkspace({ onSetup, onOpenOffers, onOpenTimeProfile
                               session.is_locked
                                 ? 'Aula com horário fixado/bloqueado. Clique para editar ou desbloquear.'
                                 : isGroup
-                                ? 'Clique para editar aula ou arraste para outro horário'
+                                ? `Aula de ${session.teacher}: clique para editar ou arraste para outro horário`
                                 : `${session.subject} (${group?.name || group?.code})`
                             }
                           >
                             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px', maxWidth: '100%' }}>
-                              <strong>{session.subject}</strong>
+                              <strong style={{ color: palette?.text }}>{session.subject}</strong>
                               {session.is_locked && (
                                 <span className="sheet-locked-badge" title="Horário bloqueado / fixo">
                                   <Lock size={11} />
                                 </span>
                               )}
                             </div>
-                            <div className="sheet-lesson-details">
+                            <div
+                              className="sheet-lesson-details"
+                              style={{
+                                color: palette?.text === '#ffffff' ? 'rgba(255, 255, 255, 0.95)' : 'rgba(15, 23, 42, 0.9)'
+                              }}
+                            >
                               {isGroup ? (
                                 <>
                                   <User size={12} />
@@ -999,6 +1049,36 @@ export default function GridWorkspace({ onSetup, onOpenOffers, onOpenTimeProfile
                 Dica: Arraste blocos para mover aulas entre dias e horários ou clique para editar.
               </span>
             </div>
+
+            {/* Teacher color legend bar */}
+            {grid.slots.length > 0 && teachers.length > 0 && (
+              <div className="sheet-legend-bar">
+                <span className="legend-label">Cores dos professores:</span>
+                <div className="legend-pills">
+                  {teachers.map((teacherName) => {
+                    const teacherObj = teachersList.find(
+                      (t) => String(t.name || '').trim().toLowerCase() === teacherName.trim().toLowerCase()
+                    );
+                    const palette = getTeacherPalette(teacherObj?.color as string | undefined, teacherName);
+                    return (
+                      <span
+                        key={teacherName}
+                        className="legend-pill"
+                        style={{
+                          backgroundColor: palette.bg,
+                          borderLeft: `4px solid ${palette.border}`,
+                          color: palette.text
+                        }}
+                        title={`Professor(a): ${teacherName}`}
+                      >
+                        <User size={12} style={{ opacity: 0.85 }} />
+                        <span>{teacherName}</span>
+                      </span>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
           </div>
 
           {/* Empty Slots check */}

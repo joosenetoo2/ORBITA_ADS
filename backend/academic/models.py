@@ -133,6 +133,7 @@ class Teacher(ActiveModel):
     institution = models.ForeignKey(Institution, on_delete=models.PROTECT)
     code = models.CharField(max_length=30)
     name = models.CharField(max_length=200)
+    color = models.CharField(max_length=30, blank=True, default="")
     max_weekly_minutes = models.PositiveIntegerField(null=True, blank=True)
     qualified_subjects = models.ManyToManyField(Subject, blank=True)
 

@@ -3,6 +3,7 @@ import {
   BookOpen,
   Calendar,
   CalendarDays,
+  Check,
   CheckCircle2,
   CircleAlert,
   Clock3,
@@ -147,7 +148,25 @@ const labels: Record<string, string> = {
   weekly_count: 'Encontros por semana',
   kind: 'Tipo de encontro',
   reason: 'Motivo',
+  color: 'Cor na grade',
 };
+
+const PRESET_TEACHER_COLORS = [
+  { label: 'Azul Real', value: '#2563eb' },
+  { label: 'Azul Marinho', value: '#1e3a5f' },
+  { label: 'Verde Esmeralda', value: '#059669' },
+  { label: 'Verde Floresta', value: '#15803d' },
+  { label: 'Roxo Nobre', value: '#7c3aed' },
+  { label: 'Violeta / Uva', value: '#581c87' },
+  { label: 'Rosa Pink', value: '#db2777' },
+  { label: 'Vinho / Carmim', value: '#831843' },
+  { label: 'Laranja', value: '#ea580c' },
+  { label: 'Âmbar / Dourado', value: '#d97706' },
+  { label: 'Ciano Oceano', value: '#0891b2' },
+  { label: 'Índigo', value: '#4338ca' },
+  { label: 'Ardósia / Grafite', value: '#334155' },
+  { label: 'Marrom Café', value: '#78350f' },
+];
 
 type Field = {
   key: string;
@@ -189,7 +208,8 @@ const fieldsets: Record<Resource, Field[]> = {
   teachers: [
     { key: 'institution', source: 'institutions', required: true },
     { key: 'code', required: true },
-    { key: 'name', required: true }
+    { key: 'name', required: true },
+    { key: 'color', type: 'color' }
   ],
   rooms: [
     { key: 'institution', source: 'institutions', required: true },
@@ -291,13 +311,39 @@ function getResourceColumns(resource: Resource): string[] {
     : resource === 'subjects'
     ? ['code', 'name', 'period_number', 'credits', 'total_workload', 'onsite_weekly_hours', 'ead_weekly_hours']
     : resource === 'teachers'
-    ? ['code', 'name']
+    ? ['code', 'name', 'color']
     : resource === 'class-groups'
     ? ['code', 'name', 'period_number', 'time_profile', 'course', 'term']
     : ['code', 'name'];
 }
 
 function displayResourceValue(row: RecordItem, key: string, data: Data) {
+  if (key === 'color') {
+    const hex = String(row[key] || '').trim();
+    if (!hex) {
+      return (
+        <span style={{ color: 'var(--color-text-dim)', fontSize: '12px', fontStyle: 'italic' }}>
+          Automática
+        </span>
+      );
+    }
+    return (
+      <div style={{ display: 'inline-flex', alignItems: 'center', gap: '8px' }}>
+        <span
+          style={{
+            display: 'inline-block',
+            width: 18,
+            height: 18,
+            borderRadius: '50%',
+            backgroundColor: hex,
+            border: '2px solid rgba(255,255,255,0.8)',
+            boxShadow: '0 0 0 1px rgba(0,0,0,0.2)'
+          }}
+        />
+        <code style={{ fontSize: '12px', fontWeight: 600 }}>{hex}</code>
+      </div>
+    );
+  }
   if (key === 'weekday') return weekdayNames[Number(row[key])];
   if (key === 'weekly_hours') return `${Number(row.weekly_minutes ?? 0) / 60} h`;
   if (key === 'total_workload') return `${String(row[key] ?? '—')} h`;
@@ -489,7 +535,7 @@ function Modal({
                   : field.options;
 
               return (
-                <label className={`form-field ${field.multiple ? 'wide' : ''}`} key={field.key}>
+                <label className={`form-field ${field.multiple || field.key === 'color' ? 'wide' : ''}`} key={field.key}>
                   <span>
                     {labels[field.key] ?? field.key}
                     {isImmutable && (
@@ -521,6 +567,78 @@ function Modal({
                         </option>
                       ))}
                     </select>
+                  ) : field.key === 'color' ? (
+                    <div style={{ marginTop: '4px' }}>
+                      <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px', marginBottom: '10px' }}>
+                        {PRESET_TEACHER_COLORS.map((c) => {
+                          const isSelected = (values.color || '').toLowerCase() === c.value.toLowerCase();
+                          return (
+                            <button
+                              key={c.value}
+                              type="button"
+                              title={`${c.label} (${c.value})`}
+                              onClick={() => setValues({ ...values, color: c.value })}
+                              style={{
+                                width: '32px',
+                                height: '32px',
+                                borderRadius: '50%',
+                                backgroundColor: c.value,
+                                border: isSelected ? '3px solid #ffffff' : '2px solid transparent',
+                                boxShadow: isSelected
+                                  ? '0 0 0 2px var(--color-primary, #3b82f6), 0 2px 4px rgba(0,0,0,0.25)'
+                                  : '0 1px 3px rgba(0,0,0,0.2)',
+                                cursor: 'pointer',
+                                display: 'flex',
+                                alignItems: 'center',
+                                justifyContent: 'center',
+                                transform: isSelected ? 'scale(1.15)' : 'none',
+                                transition: 'transform 0.15s, box-shadow 0.15s',
+                                padding: 0
+                              }}
+                            >
+                              {isSelected && <Check size={16} color="#ffffff" strokeWidth={3} />}
+                            </button>
+                          );
+                        })}
+                      </div>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                        <input
+                          type="color"
+                          title="Escolher cor personalizada"
+                          value={values.color && /^#[0-9a-fA-F]{6}$/.test(values.color) ? values.color : '#2563eb'}
+                          onChange={(e) => setValues({ ...values, color: e.target.value })}
+                          style={{
+                            width: '40px',
+                            height: '38px',
+                            padding: '2px',
+                            borderRadius: '8px',
+                            border: '1px solid var(--color-border)',
+                            cursor: 'pointer',
+                            background: 'none'
+                          }}
+                        />
+                        <input
+                          type="text"
+                          placeholder="Ex: #2563eb ou escolha uma cor acima"
+                          value={values.color ?? ''}
+                          onChange={(e) => setValues({ ...values, color: e.target.value })}
+                          style={{ flex: 1, fontFamily: 'monospace' }}
+                        />
+                        {values.color && (
+                          <button
+                            type="button"
+                            className="button small ghost"
+                            onClick={() => setValues({ ...values, color: '' })}
+                            title="Remover cor e usar cor automática"
+                          >
+                            Limpar
+                          </button>
+                        )}
+                      </div>
+                      <small style={{ display: 'block', marginTop: '6px', color: 'var(--color-text-dim)', fontSize: '11.5px' }}>
+                        Todas as aulas deste professor na grade usarão esta cor para identificação rápida.
+                      </small>
+                    </div>
                   ) : (
                     <input
                       required={!isImmutable && field.required}

@@ -180,7 +180,8 @@ class BatchImportView(APIView):
                     elif resource == "teachers":
                         if models.Teacher.objects.filter(institution=institution, code__iexact=code).exists():
                             skipped += 1; continue
-                        obj = models.Teacher(institution=institution, code=code, name=name)
+                        color = str(row.get("color", "") or row.get("cor", "")).strip()
+                        obj = models.Teacher(institution=institution, code=code, name=name, color=color)
                     elif resource == "rooms":
                         if models.Room.objects.filter(institution=institution, code__iexact=code).exists():
                             skipped += 1; continue
@@ -572,13 +573,16 @@ class ScheduleViewSet(AcademicViewSet):
             "groups": [{"id": group.pk, "code": group.code, "name": group.name} for group in groups],
             "offerings": [{"id": offer.pk, "group_id": offer.group_id, "subject": offer.subject.name,
                            "onsite_weekly_hours": offer.subject.onsite_weekly_hours,
-                           "teachers": [{"id": teacher.pk, "name": teacher.name} for teacher in offer.eligible_teachers.all()],
+                           "teachers": [{"id": teacher.pk, "name": teacher.name, "color": teacher.color} for teacher in offer.eligible_teachers.all()],
                            "blocks": self._grid_blocks(offer)}
                           for offer in offerings],
             "slots": [{"id": slot.pk, "start": slot.starts_at.strftime("%H:%M"), "end": slot.ends_at.strftime("%H:%M")} for slot in schedule_slots],
             "sessions": [{"id": item.pk, "group_id": item.requirement.offering.group_id, "weekday": item.weekday,
                           "start": item.starts_at.strftime("%H:%M"), "end": item.ends_at.strftime("%H:%M"),
-                          "subject": item.requirement.offering.subject.name, "teacher": item.teacher.name,
+                          "subject": item.requirement.offering.subject.name,
+                          "teacher": item.teacher.name,
+                          "teacher_id": item.teacher_id,
+                          "teacher_color": item.teacher.color,
                           "room": item.room.name or item.room.code,
                           "room_code": item.room.code,
                           "is_locked": item.is_locked}

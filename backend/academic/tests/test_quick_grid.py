@@ -26,7 +26,7 @@ class QuickGridTests(TestCase):
         self.grid = self.client.get(self.grid_url).data
         institution = Institution.objects.get()
         subject = Subject.objects.create(institution=institution, code="POO", name="Programação OO", credits=2, onsite_weekly_hours=2, total_workload=40, period_number=1)
-        arthur = Teacher.objects.create(institution=institution, code="ARTHUR", name="Arthur Oliveira")
+        arthur = Teacher.objects.create(institution=institution, code="ARTHUR", name="Arthur Oliveira", color="#2563eb")
         beatriz = Teacher.objects.create(institution=institution, code="BIA", name="Beatriz")
         for group in ClassGroup.objects.all():
             offering, _ = offer_subject(subject, group, arthur)
@@ -43,6 +43,7 @@ class QuickGridTests(TestCase):
         grid = self.client.get(self.grid_url).data
         self.assertEqual(grid["sessions"][0]["end"], "19:50")
         self.assertEqual(grid["sessions"][0]["teacher"], "Arthur Oliveira")
+        self.assertEqual(grid["sessions"][0]["teacher_color"], "#2563eb")
         self.assertEqual(grid["weekdays"], [1, 2, 3, 4, 5])
         self.assertEqual(Subject.objects.count(), 1)
         self.assertEqual(Teacher.objects.count(), 2)

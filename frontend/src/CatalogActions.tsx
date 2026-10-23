@@ -9,7 +9,7 @@ const importLabels: Record<ImportKind, string> = { courses: 'Cursos', subjects: 
 const examples: Record<ImportKind, string> = {
   courses: 'codigo;nome;modalidade\nADS;Análise e Desenvolvimento de Sistemas;Presencial',
   subjects: 'codigo;nome;periodo;creditos;horas_presenciais;horas_ead\nOO;Programação OO;2;4;3;1',
-  teachers: 'codigo;nome\nANA;Ana Oliveira\nBRUNO;Bruno Silva',
+  teachers: 'codigo;nome;cor\nANA;Ana Oliveira;#2563eb\nBRUNO;Bruno Silva;#059669',
   rooms: 'codigo;nome;capacidade\nH01;Sala H01;40',
   'class-groups': 'codigo;nome;periodo;turno\nP1A;1º A;1;Noite\nP1B;1º B;1;Manhã',
   offerings: 'turma;disciplina;professor;horas_por_bloco\nP1A;OO;ANA;2',
@@ -24,6 +24,7 @@ const aliases: Record<string, string> = {
   disciplina: 'subject_code', subject_code: 'subject_code', professor: 'teacher_code', teacher_code: 'teacher_code',
   horas_por_bloco: 'block_hours', block_hours: 'block_hours',
   modalidade: 'modality', modality: 'modality',
+  cor: 'color', color: 'color',
 };
 function normalize(value: string) { return value.trim().toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^a-z0-9]+/g, '_').replace(/^_|_$/g, ''); }
 function parseDelimited(source: string) {
