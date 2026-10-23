@@ -277,6 +277,28 @@ export default function GridWorkspace({ onSetup, onOpenOffers, onOpenTimeProfile
     return grid ? [...new Set(grid.sessions.map((item) => item.teacher))].sort((a, b) => a.localeCompare(b, 'pt-BR')) : [];
   }, [grid]);
   const cellOfferings = grid?.offerings.filter((item) => item.group_id === editor?.group_id) ?? [];
+
+  const availableOfferings = useMemo(() => {
+    if (!grid || !editor) return [];
+    return cellOfferings
+      .map((offer) => {
+        const totalHours = offer.onsite_weekly_hours ?? 4;
+        const allocatedHours = grid.sessions
+          .filter((s) => s.group_id === editor.group_id && s.subject === offer.subject && s.id !== editor.session_id)
+          .reduce((sum, s) => sum + sessionSpan(s), 0);
+        const remainingHours = Math.max(0, totalHours - allocatedHours);
+        const isEditingThis = Boolean(editor.session_id && editor.subject === offer.subject);
+        return {
+          ...offer,
+          totalHours,
+          allocatedHours,
+          remainingHours,
+          isAvailable: remainingHours > 0 || isEditingThis,
+        };
+      })
+      .filter((offer) => offer.isAvailable);
+  }, [grid, editor, cellOfferings]);
+
   const cellOffering = cellOfferings.find((item) => item.subject === editor?.subject);
   const cellTeachers = cellOffering?.teachers ?? [];
   const slotAllowed = (day: number, slotId: number) => !grid?.profiles_active || (grid.available_slot_ids_by_day[String(day)] ?? []).includes(slotId);
@@ -1264,9 +1286,23 @@ export default function GridWorkspace({ onSetup, onOpenOffers, onOpenTimeProfile
 
                 <label className="form-field wide">
                   Disciplina
-                  <select required autoFocus value={editor.subject} onChange={(event) => setEditor({ ...editor, subject: event.target.value, teacher: '' })}>
+                  <select
+                    required
+                    autoFocus
+                    value={editor.subject}
+                    onChange={(event) => setEditor({ ...editor, subject: event.target.value, teacher: '' })}
+                  >
                     <option value="">Selecione uma disciplina ofertada…</option>
-                    {cellOfferings.map((item) => <option key={item.id} value={item.subject}>{item.subject} · {item.onsite_weekly_hours} h presenciais/semana</option>)}
+                    {availableOfferings.map((item) => {
+                      const detailLabel = item.allocatedHours > 0
+                        ? `${item.remainingHours}h restante(s) de ${item.totalHours}h`
+                        : `${item.totalHours}h presenciais/semana`;
+                      return (
+                        <option key={item.id} value={item.subject}>
+                          {item.subject} · {detailLabel}
+                        </option>
+                      );
+                    })}
                   </select>
                 </label>
 
@@ -1349,9 +1385,26 @@ export default function GridWorkspace({ onSetup, onOpenOffers, onOpenTimeProfile
                   {grid.sessions
                     .filter((s) => s.group_id === editor.group_id && s.subject === editor.subject && s.id !== editor.session_id)
                     .reduce((sum, s) => sum + sessionSpan(s), 0)}h de {cellOffering.onsite_weekly_hours ?? 'Livre'}h
+                  {cellOffering.onsite_weekly_hours !== undefined && (
+                    <> (Restante: {Math.max(0, (cellOffering.onsite_weekly_hours ?? 4) - grid.sessions
+                      .filter((s) => s.group_id === editor.group_id && s.subject === editor.subject && s.id !== editor.session_id)
+                      .reduce((sum, s) => sum + sessionSpan(s), 0))}h)</>
+                  )}
                 </p>
               )}
-              {!cellOfferings.length && <p className="form-error">Esta turma ainda não tem disciplinas ofertadas. <button type="button" className="button small" onClick={() => { setEditor(null); onOpenOffers?.(); }}>Abrir ofertas</button></p>}
+              {!cellOfferings.length && (
+                <p className="form-error">
+                  Esta turma ainda não tem disciplinas ofertadas.{' '}
+                  <button type="button" className="button small" onClick={() => { setEditor(null); onOpenOffers?.(); }}>
+                    Abrir ofertas
+                  </button>
+                </p>
+              )}
+              {cellOfferings.length > 0 && !availableOfferings.length && !editor.session_id && (
+                <p className="sheet-helper" style={{ color: '#10b981', fontWeight: 600 }}>
+                  🎉 Todas as disciplinas ofertadas desta turma já tiveram suas horas presenciais 100% alocadas na grade!
+                </p>
+              )}
               {cellOffering && !availableSpans.length && (
                 <p className="form-error">
                   {grid.sessions
@@ -1384,7 +1437,10 @@ export default function GridWorkspace({ onSetup, onOpenOffers, onOpenTimeProfile
                 <button className="button ghost" type="button" onClick={() => setEditor(null)}>
                   Cancelar
                 </button>
-                <button className="button primary" disabled={busy || !cellOfferings.length || !availableSpans.length}>
+                <button
+                  className="button primary"
+                  disabled={busy || !cellOfferings.length || (!editor.session_id && !availableOfferings.length) || !availableSpans.length}
+                >
                   {busy ? 'Salvando…' : 'Salvar aula'}
                 </button>
               </div>
