@@ -102,3 +102,22 @@ class ScheduleApiTests(TestCase):
         self.assertEqual(preview.status_code, 200, preview.data)
         self.assertFalse(preview.data["valid"])
         self.assertEqual(ScheduledSession.objects.count(), 1)
+
+    def test_delete_resource_success(self):
+        new_teacher = Teacher.objects.create(institution=self.institution, code="TEMP", name="Professor Temporário")
+        response = self.client.delete(f"/api/v1/teachers/{new_teacher.pk}/")
+        self.assertEqual(response.status_code, 204)
+        self.assertFalse(Teacher.objects.filter(pk=new_teacher.pk).exists())
+
+    def test_delete_protected_resource_fails_gracefully(self):
+        # Subject is linked to an existing offering
+        subject = self.requirement.offering.subject
+        response = self.client.delete(f"/api/v1/subjects/{subject.pk}/")
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("vínculos ativos", str(response.data))
+        self.assertTrue(Subject.objects.filter(pk=subject.pk).exists())
+
+    def test_delete_institution_rejected(self):
+        response = self.client.delete(f"/api/v1/institutions/{self.institution.pk}/")
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("não pode ser excluída", str(response.data))

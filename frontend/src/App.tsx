@@ -19,10 +19,11 @@ import {
   School,
   Search,
   Settings2,
+  Trash2,
   Users,
   X
 } from 'lucide-react';
-import { create, listAll, update, type RecordItem } from './api';
+import { create, listAll, remove, update, type RecordItem } from './api';
 import ScheduleEditor from './ScheduleEditor';
 import GridWorkspace from './GridWorkspace';
 import type { AuthUser } from './AuthGate';
@@ -341,7 +342,8 @@ function Modal({
   defaults,
   data,
   onClose,
-  onSaved
+  onSaved,
+  onDelete
 }: {
   resource: Resource;
   item: RecordItem | null;
@@ -349,6 +351,7 @@ function Modal({
   data: Data;
   onClose: () => void;
   onSaved: (noticeMessage: string) => void;
+  onDelete?: (item: RecordItem) => void;
 }) {
   const isEditing = Boolean(item);
   const [values, setValues] = useState<Record<string, string>>(() => ({ ...getInitialValues(resource, item, data), ...defaults }));
@@ -514,13 +517,27 @@ function Modal({
             </p>
           )}
 
-          <div className="modal-actions">
-            <button className="button ghost" type="button" onClick={onClose}>
-              Cancelar
-            </button>
-            <button className="button primary" type="submit" disabled={saving}>
-              {saving ? 'Salvando…' : isEditing ? 'Salvar alterações' : 'Salvar cadastro'}
-            </button>
+          <div className="modal-actions" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '8px' }}>
+            {isEditing && item && resource !== 'institutions' ? (
+              <button
+                className="button danger ghost"
+                type="button"
+                onClick={() => onDelete?.(item)}
+                title={`Excluir este(a) ${resourceNames[resource].toLowerCase()}`}
+              >
+                <Trash2 size={16} />
+                Excluir {resourceNames[resource].toLowerCase()}
+              </button>
+            ) : <span />}
+
+            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+              <button className="button ghost" type="button" onClick={onClose} disabled={saving}>
+                Cancelar
+              </button>
+              <button className="button primary" type="submit" disabled={saving}>
+                {saving ? 'Salvando…' : isEditing ? 'Salvar alterações' : 'Salvar cadastro'}
+              </button>
+            </div>
           </div>
         </form>
       </section>
@@ -559,6 +576,7 @@ function ListPanel({
   title,
   onAdd,
   onEdit,
+  onDelete,
   data
 }: {
   resource: Resource;
@@ -566,6 +584,7 @@ function ListPanel({
   title?: string;
   onAdd: () => void;
   onEdit: (item: RecordItem) => void;
+  onDelete?: (item: RecordItem) => void;
   data: Data;
 }) {
   const columns = getResourceColumns(resource);
@@ -595,7 +614,7 @@ function ListPanel({
                     {labels[key] ?? key}
                   </th>
                 ))}
-                <th scope="col" style={{ width: '60px', textAlign: 'center' }}>
+                <th scope="col" style={{ width: '130px', textAlign: 'center' }}>
                   Ações
                 </th>
               </tr>
@@ -607,16 +626,30 @@ function ListPanel({
                     <td key={key}>{displayResourceValue(row, key, data)}</td>
                   ))}
                   <td style={{ textAlign: 'center', padding: '6px 12px' }}>
-                    <button
-                      className="button small ghost"
-                      style={{ padding: '4px 8px', minHeight: '30px' }}
-                      onClick={() => onEdit(row)}
-                      title={`Editar ${resourceNames[resource]}`}
-                      aria-label={`Editar ${displayName(row)}`}
-                    >
-                      <Pencil size={14} style={{ color: 'var(--color-secondary)' }} />
-                      <span style={{ fontSize: '11.5px', marginLeft: 4 }}>Editar</span>
-                    </button>
+                    <div style={{ display: 'inline-flex', alignItems: 'center', gap: '4px', justifyContent: 'center' }}>
+                      <button
+                        className="button small ghost"
+                        style={{ padding: '4px 8px', minHeight: '30px' }}
+                        onClick={() => onEdit(row)}
+                        title={`Editar ${resourceNames[resource]}`}
+                        aria-label={`Editar ${displayName(row)}`}
+                      >
+                        <Pencil size={14} style={{ color: 'var(--color-secondary)' }} />
+                        <span style={{ fontSize: '11.5px', marginLeft: 4 }}>Editar</span>
+                      </button>
+                      {resource !== 'institutions' && (
+                        <button
+                          className="button small ghost"
+                          style={{ padding: '4px 8px', minHeight: '30px', color: 'var(--color-destructive)' }}
+                          onClick={() => onDelete?.(row)}
+                          title={`Excluir ${resourceNames[resource]}`}
+                          aria-label={`Excluir ${displayName(row)}`}
+                        >
+                          <Trash2 size={14} />
+                          <span style={{ fontSize: '11.5px', marginLeft: 4 }}>Excluir</span>
+                        </button>
+                      )}
+                    </div>
                   </td>
                 </tr>
               ))}
@@ -649,6 +682,9 @@ export default function App({
   const [gridRefresh, setGridRefresh] = useState(0);
   const [offerTarget, setOfferTarget] = useState<{ subjectId?: number; teacherId?: number; groupId?: number } | null>(null);
   const [importKind, setImportKind] = useState<ImportKind | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<{ resource: Resource; item: RecordItem } | null>(null);
+  const [deleting, setDeleting] = useState(false);
+  const [deleteError, setDeleteError] = useState('');
 
   // Tabbed catalog state
   const [catalogTab, setCatalogTab] = useState<Resource>('subjects');
@@ -667,6 +703,24 @@ export default function App({
       setLoading(false);
     }
   }, []);
+
+  async function executeDelete() {
+    if (!deleteTarget) return;
+    setDeleting(true);
+    setDeleteError('');
+    try {
+      await remove(deleteTarget.resource, deleteTarget.item.id);
+      setNotice(`${resourceNames[deleteTarget.resource]} "${displayName(deleteTarget.item)}" excluído(a) com sucesso.`);
+      setDeleteTarget(null);
+      setModalTarget(null);
+      await loadData();
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'Falha ao excluir o registro.';
+      setDeleteError(msg);
+    } finally {
+      setDeleting(false);
+    }
+  }
 
   useEffect(() => {
     void loadData();
@@ -1081,7 +1135,7 @@ export default function App({
                                   {labels[key] ?? key}
                                 </th>
                               ))}
-                              <th scope="col" style={{ width: '80px', textAlign: 'center' }}>
+                              <th scope="col" style={{ width: '150px', textAlign: 'center' }}>
                                 Ações
                               </th>
                             </tr>
@@ -1093,19 +1147,35 @@ export default function App({
                                   <td key={key}>{displayResourceValue(row, key, data)}</td>
                                 ))}
                                 <td style={{ textAlign: 'center', padding: '6px 12px' }}>
-                                  {activeResource !== 'subject-offerings' && <button
-                                    className="button small ghost"
-                                    style={{ padding: '4px 10px', minHeight: '30px' }}
-                                    onClick={() => openEditModal(activeResource, row)}
-                                    title={`Editar ${resourceNames[activeResource]}`}
-                                    aria-label={`Editar ${displayName(row)}`}
-                                  >
-                                    <Pencil size={14} style={{ color: 'var(--color-secondary)' }} />
-                                    <span style={{ fontSize: '12px', marginLeft: 4 }}>Editar</span>
-                                  </button>}
-                                  {activeResource === 'subjects' && <button className="button small" onClick={() => setOfferTarget({ subjectId: row.id })}>Ofertar · professor</button>}
-                                  {activeResource === 'teachers' && <button className="button small" onClick={() => setOfferTarget({ teacherId: row.id })}>Alocar a oferta</button>}
-                                  {activeResource === 'subject-offerings' && <button className="button small" onClick={() => setOfferTarget({ subjectId: Number(row.subject), groupId: Number(row.group) })}>Alocar professor</button>}
+                                  <div style={{ display: 'inline-flex', alignItems: 'center', gap: '4px', flexWrap: 'wrap', justifyContent: 'center' }}>
+                                    <button
+                                      className="button small ghost"
+                                      style={{ padding: '4px 8px', minHeight: '30px' }}
+                                      onClick={() => openEditModal(activeResource, row)}
+                                      title={`Editar ${resourceNames[activeResource]}`}
+                                      aria-label={`Editar ${displayName(row)}`}
+                                    >
+                                      <Pencil size={14} style={{ color: 'var(--color-secondary)' }} />
+                                      <span style={{ fontSize: '11.5px', marginLeft: 4 }}>Editar</span>
+                                    </button>
+
+                                    {activeResource !== 'institutions' && (
+                                      <button
+                                        className="button small ghost"
+                                        style={{ padding: '4px 8px', minHeight: '30px', color: 'var(--color-destructive)' }}
+                                        onClick={() => { setDeleteError(''); setDeleteTarget({ resource: activeResource, item: row }); }}
+                                        title={`Excluir ${resourceNames[activeResource]}`}
+                                        aria-label={`Excluir ${displayName(row)}`}
+                                      >
+                                        <Trash2 size={14} />
+                                        <span style={{ fontSize: '11.5px', marginLeft: 4 }}>Excluir</span>
+                                      </button>
+                                    )}
+
+                                    {activeResource === 'subjects' && <button className="button small" onClick={() => setOfferTarget({ subjectId: row.id })}>Ofertar · professor</button>}
+                                    {activeResource === 'teachers' && <button className="button small" onClick={() => setOfferTarget({ teacherId: row.id })}>Alocar a oferta</button>}
+                                    {activeResource === 'subject-offerings' && <button className="button small" onClick={() => setOfferTarget({ subjectId: Number(row.subject), groupId: Number(row.group) })}>Alocar professor</button>}
+                                  </div>
                                 </td>
                               </tr>
                             ))}
@@ -1141,9 +1211,68 @@ export default function App({
                   <div className="profile-grid">
                     {data['time-profiles'].map((profile) => {
                       const windows = data['time-windows'].filter((window) => Number(window.profile) === profile.id);
-                      return <section className="panel profile-card" key={profile.id}><div className="panel-head"><div><span className="eyebrow">PERFIL DE HORÁRIO</span><h3>{String(profile.name)}</h3><small>{windows.length} janela(s)</small></div><div className="profile-actions"><button className="button small ghost" onClick={() => openEditModal('time-profiles', profile)}><Pencil size={14} />Editar perfil</button><button className="button small" onClick={() => openCreateModal('time-windows', { profile: String(profile.id), institution: String(profile.institution) })}><Plus size={14} />Janela neste perfil</button></div></div>{windows.length ? <div className="profile-windows">{windows.map((window) => <div className="profile-window" key={window.id}><span><strong>{weekdayNames[Number(window.weekday)]}</strong> {String(window.starts_at).slice(0, 5)}–{String(window.ends_at).slice(0, 5)} <small>· {String(window.scope === 'INSTITUTION' ? 'Instituição' : window.scope)}</small></span><button className="button small ghost" onClick={() => openEditModal('time-windows', window)}><Pencil size={14} />Editar</button></div>)}</div> : <div className="empty-list">Nenhuma janela neste perfil. Use “Janela neste perfil”.</div>}</section>;
+                      return (
+                        <section className="panel profile-card" key={profile.id}>
+                          <div className="panel-head">
+                            <div>
+                              <span className="eyebrow">PERFIL DE HORÁRIO</span>
+                              <h3>{String(profile.name)}</h3>
+                              <small>{windows.length} janela(s)</small>
+                            </div>
+                            <div className="profile-actions">
+                              <button className="button small ghost" onClick={() => openEditModal('time-profiles', profile)}>
+                                <Pencil size={14} />Editar perfil
+                              </button>
+                              <button
+                                className="button small ghost"
+                                style={{ color: 'var(--color-destructive)' }}
+                                onClick={() => { setDeleteError(''); setDeleteTarget({ resource: 'time-profiles', item: profile }); }}
+                              >
+                                <Trash2 size={14} />Excluir
+                              </button>
+                              <button className="button small" onClick={() => openCreateModal('time-windows', { profile: String(profile.id), institution: String(profile.institution) })}>
+                                <Plus size={14} />Janela neste perfil
+                              </button>
+                            </div>
+                          </div>
+                          {windows.length ? (
+                            <div className="profile-windows">
+                              {windows.map((window) => (
+                                <div className="profile-window" key={window.id}>
+                                  <span>
+                                    <strong>{weekdayNames[Number(window.weekday)]}</strong> {String(window.starts_at).slice(0, 5)}–{String(window.ends_at).slice(0, 5)} <small>· {String(window.scope === 'INSTITUTION' ? 'Instituição' : window.scope)}</small>
+                                  </span>
+                                  <div style={{ display: 'inline-flex', gap: 4 }}>
+                                    <button className="button small ghost" onClick={() => openEditModal('time-windows', window)}>
+                                      <Pencil size={14} />Editar
+                                    </button>
+                                    <button
+                                      className="button small ghost"
+                                      style={{ color: 'var(--color-destructive)' }}
+                                      onClick={() => { setDeleteError(''); setDeleteTarget({ resource: 'time-windows', item: window }); }}
+                                      title="Excluir janela"
+                                    >
+                                      <Trash2 size={14} />Excluir
+                                    </button>
+                                  </div>
+                                </div>
+                              ))}
+                            </div>
+                          ) : (
+                            <div className="empty-list">Nenhuma janela neste perfil. Use “Janela neste perfil”.</div>
+                          )}
+                        </section>
+                      );
                     })}
-                    <ListPanel resource="time-windows" title="Janelas sem perfil" rows={data['time-windows'].filter((window) => !window.profile)} data={data} onAdd={() => openCreateModal('time-windows')} onEdit={(item) => openEditModal('time-windows', item)} />
+                    <ListPanel
+                      resource="time-windows"
+                      title="Janelas sem perfil"
+                      rows={data['time-windows'].filter((window) => !window.profile)}
+                      data={data}
+                      onAdd={() => openCreateModal('time-windows')}
+                      onEdit={(item) => openEditModal('time-windows', item)}
+                      onDelete={(item) => { setDeleteError(''); setDeleteTarget({ resource: 'time-windows', item }); }}
+                    />
                   </div>
                   <div className="info-note">
                     <Clock3 size={18} />
@@ -1172,8 +1301,78 @@ export default function App({
             setNotice(msg);
             void loadData();
           }}
+          onDelete={(item) => {
+            setDeleteError('');
+            setDeleteTarget({ resource: modalTarget.resource, item });
+          }}
         />
       )}
+
+      {/* Delete Confirmation Modal */}
+      {deleteTarget && (
+        <div className="modal-backdrop" onMouseDown={() => !deleting && setDeleteTarget(null)}>
+          <section
+            className="modal"
+            role="alertdialog"
+            aria-modal="true"
+            aria-labelledby="delete-heading"
+            onMouseDown={(event) => event.stopPropagation()}
+            style={{ maxWidth: '440px' }}
+          >
+            <div className="modal-head">
+              <div>
+                <span className="eyebrow" style={{ color: 'var(--color-destructive)' }}>CONFIRMAR EXCLUSÃO</span>
+                <h2 id="delete-heading">Excluir {resourceNames[deleteTarget.resource]}?</h2>
+              </div>
+              <button
+                className="icon-button"
+                disabled={deleting}
+                onClick={() => setDeleteTarget(null)}
+                aria-label="Fechar"
+              >
+                <X size={20} />
+              </button>
+            </div>
+
+            <div style={{ padding: '16px 0 24px', fontSize: '13.5px', lineHeight: 1.6, color: 'var(--color-text)' }}>
+              <p>
+                Tem certeza que deseja apagar o registro <strong>"{displayName(deleteTarget.item)}"</strong>?
+              </p>
+              <p style={{ marginTop: '8px', fontSize: '12px', color: 'var(--color-text-muted)' }}>
+                Esta ação removerá o item do sistema. Registros com aulas ativas na grade ou vínculos dependentes serão protegidos contra remoção acidental.
+              </p>
+            </div>
+
+            {deleteError && (
+              <p className="form-error" role="alert" style={{ marginBottom: 16 }}>
+                <CircleAlert size={16} />
+                {deleteError}
+              </p>
+            )}
+
+            <div className="modal-actions">
+              <button
+                className="button ghost"
+                type="button"
+                disabled={deleting}
+                onClick={() => setDeleteTarget(null)}
+              >
+                Cancelar
+              </button>
+              <button
+                className="button danger"
+                type="button"
+                disabled={deleting || deleteTarget.resource === 'institutions'}
+                onClick={() => void executeDelete()}
+              >
+                <Trash2 size={16} />
+                {deleting ? 'Excluindo…' : 'Sim, excluir'}
+              </button>
+            </div>
+          </section>
+        </div>
+      )}
+
       {offerTarget && <OfferModal data={data} {...offerTarget} onClose={() => setOfferTarget(null)} onSaved={(message) => { setOfferTarget(null); setNotice(message); void loadData(); }} />}
       {importKind && <ImportModal kind={importKind} data={data} onClose={() => setImportKind(null)} onSaved={(message) => { setImportKind(null); setNotice(message); void loadData(); }} />}
     </div>
