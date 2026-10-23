@@ -2,18 +2,45 @@ services:
   db:
     image: postgres:16-alpine
     environment:
-      POSTGRES_DB: orbita
-      POSTGRES_USER: orbita
-      POSTGRES_PASSWORD: orbita
-    ports:
-      - "5432:5432"
+      POSTGRES_DB: ${POSTGRES_DB:-orbita}
+      POSTGRES_USER: ${POSTGRES_USER:-orbita}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-orbita_secret_password}
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U orbita"]
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-orbita}"]
       interval: 5s
       timeout: 5s
       retries: 10
+    restart: unless-stopped
+
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    environment:
+      DATABASE_URL: postgres://${POSTGRES_USER:-orbita}:${POSTGRES_PASSWORD:-orbita_secret_password}@db:5432/${POSTGRES_DB:-orbita}
+      DJANGO_SECRET_KEY: ${DJANGO_SECRET_KEY:-orbita-production-secret-key-change-me}
+      DJANGO_DEBUG: "false"
+      DJANGO_ALLOWED_HOSTS: "*"
+      CORS_ALLOWED_ORIGINS: "${APP_URL:-http://localhost}"
+      CSRF_TRUSTED_ORIGINS: "${APP_URL:-http://localhost}"
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: unless-stopped
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    environment:
+      BACKEND_HOST: backend:8000
+    ports:
+      - "80:80"
+    depends_on:
+      - backend
+    restart: unless-stopped
+
 volumes:
   postgres_data:
-
