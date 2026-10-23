@@ -8,6 +8,8 @@ from . import models
 def offer_subject(subject, group, teacher, block_hours=2):
     if group.course.institution_id != subject.institution_id or teacher.institution_id != subject.institution_id:
         raise ValidationError({"offering": "Turma, disciplina e professor devem pertencer à mesma instituição."})
+    if not group.period_number or not subject.period_number or group.period_number != subject.period_number:
+        raise ValidationError({"subject": "A disciplina deve pertencer ao mesmo período curricular da turma."})
     if subject.credits is None or subject.onsite_weekly_hours is None:
         raise ValidationError({"subject": "Defina créditos e horas presenciais semanais na disciplina antes de ofertá-la."})
     try:

@@ -19,14 +19,15 @@ class ScheduleApiTests(TestCase):
         institution = Institution.objects.create(name="Instituição de teste")
         term = AcademicTerm.objects.create(institution=institution, name="2027.1", starts_on="2027-01-01", ends_on="2027-06-30")
         course = Course.objects.create(institution=institution, code="ADS", name="ADS")
-        subject = Subject.objects.create(institution=institution, code="ALG", name="Algoritmos")
+        subject = Subject.objects.create(institution=institution, code="ALG", name="Algoritmos", period_number=1)
+        self.night = TimeProfile.objects.create(institution=institution, name="Noite")
         self.teacher = Teacher.objects.create(institution=institution, code="P1", name="Ana")
         self.room = Room.objects.create(institution=institution, code="S1", name="Sala 1")
-        group = ClassGroup.objects.create(course=course, term=term, code="ADS-A")
+        group = ClassGroup.objects.create(course=course, term=term, code="ADS-A", period_number=1, time_profile=self.night)
         offering = SubjectOffering.objects.create(group=group, subject=subject, weekly_minutes=200)
         offering.eligible_teachers.add(self.teacher)
         self.requirement = SessionRequirement.objects.create(offering=offering, duration_minutes=100, weekly_count=2)
-        self.schedule = Schedule.objects.create(course=course, term=term)
+        self.schedule = Schedule.objects.create(course=course, term=term, time_profile=self.night)
         TimeWindow.objects.create(institution=institution, weekday=1, starts_at=time(18), ends_at=time(22))
         self.institution = institution
 
@@ -113,6 +114,75 @@ class ScheduleApiTests(TestCase):
         repeated = self.client.post(url, {"institution_id": self.institution.pk}, format="json")
         self.assertEqual(repeated.status_code, 200, repeated.data)
         self.assertEqual(TimeWindow.objects.filter(profile__isnull=False).count(), 10)
+
+    def test_grid_uses_profile_windows_and_preserves_allocated_lessons(self):
+        self.client.post("/api/v1/time-profiles/setup-shifts/", {"institution_id": self.institution.pk}, format="json")
+        preview_url = f"/api/v1/schedules/{self.schedule.pk}/profile-slots/"
+        preview = self.client.get(preview_url)
+        self.assertEqual(preview.status_code, 200, preview.data)
+        self.assertEqual({item["name"] for item in preview.data["profiles"]}, {"Noite"})
+        self.assertEqual(preview.data["weekdays"], [1, 2, 3, 4, 5])
+        self.assertEqual(len(preview.data["slots"]), 4)
+        path = f"/api/v1/schedules/{self.schedule.pk}/configure-grid/"
+        configured = self.client.post(path, {"use_profiles": True}, format="json", HTTP_IF_MATCH="1")
+        self.assertEqual(configured.status_code, 200, configured.data)
+        self.assertEqual(configured.data["slot_count"], 4)
+        self.requirement.duration_minutes = 120
+        self.requirement.save(update_fields=["duration_minutes"])
+        lesson = ScheduledSession.objects.create(schedule=self.schedule, requirement=self.requirement, occurrence=1, weekday=1, starts_at=time(17, 50), ends_at=time(19, 50), teacher=self.teacher, room=self.room)
+        TimeWindow.objects.filter(profile__name="Manhã").delete()
+        updated = self.client.post(path, {"use_profiles": True}, format="json", HTTP_IF_MATCH="2")
+        self.assertEqual(updated.status_code, 200, updated.data)
+        self.assertEqual(updated.data["slot_count"], 4)
+        self.assertTrue(ScheduledSession.objects.filter(pk=lesson.pk).exists())
+        grid = self.client.get(f"/api/v1/schedules/{self.schedule.pk}/grid/").data
+        self.assertEqual(grid["weekdays"], [1, 2, 3, 4, 5])
+        self.assertEqual(grid["slots"][0]["start"], "17:50")
+
+    def test_quick_setup_uses_profiles_when_they_are_active(self):
+        self.client.post("/api/v1/time-profiles/setup-shifts/", {"institution_id": self.institution.pk}, format="json")
+        response = self.client.post("/api/v1/schedules/quick-setup/", {
+            "institution": self.institution.name, "course_code": "ADS", "course_name": "ADS",
+            "term": "2027.1", "starts_on": "2027-01-01", "ends_on": "2027-06-30",
+            "groups": ["ADS-B"], "time_profile_id": self.night.pk, "slots": [{"start": "13:00", "end": "14:00"}], "weekdays": [6],
+        }, format="json")
+        self.assertEqual(response.status_code, 201, response.data)
+        grid = self.client.get(f"/api/v1/schedules/{self.schedule.pk}/grid/").data
+        self.assertEqual(len(grid["slots"]), 4)
+        self.assertEqual(grid["weekdays"], [1, 2, 3, 4, 5])
+        self.assertNotIn("13:00", [slot["start"] for slot in grid["slots"]])
+
+    def test_profile_sync_rejects_change_that_would_strand_a_lesson(self):
+        self.client.post("/api/v1/time-profiles/setup-shifts/", {"institution_id": self.institution.pk}, format="json")
+        self.requirement.duration_minutes = 120
+        self.requirement.save(update_fields=["duration_minutes"])
+        lesson = ScheduledSession.objects.create(schedule=self.schedule, requirement=self.requirement, occurrence=1, weekday=1, starts_at=time(17, 50), ends_at=time(19, 50), teacher=self.teacher, room=self.room)
+        TimeWindow.objects.filter(profile__name="Noite", weekday=1).update(starts_at=time(18, 50))
+        response = self.client.post(f"/api/v1/schedules/{self.schedule.pk}/configure-grid/", {"use_profiles": True}, format="json", HTTP_IF_MATCH="1")
+        self.assertEqual(response.status_code, 400, response.data)
+        self.assertTrue(ScheduledSession.objects.filter(pk=lesson.pk).exists())
+        self.schedule.refresh_from_db()
+        self.assertEqual(self.schedule.revision, 1)
+
+    def test_old_grid_slot_outside_active_profile_is_explained(self):
+        configured = self.client.post(f"/api/v1/schedules/{self.schedule.pk}/configure-grid/", {
+            "slots": [{"start": "17:50", "end": "18:50"}, {"start": "18:50", "end": "19:50"}], "weekdays": [1],
+        }, format="json", HTTP_IF_MATCH="1")
+        self.assertEqual(configured.status_code, 200, configured.data)
+        profile = self.night
+        TimeWindow.objects.create(institution=self.institution, profile=profile, weekday=1, starts_at=time(18, 30), ends_at=time(21, 30), scope="COURSE", scope_id=self.schedule.course_id)
+        grid = self.client.get(f"/api/v1/schedules/{self.schedule.pk}/grid/").data
+        self.assertFalse(grid["profile_slots_in_sync"])
+        self.assertEqual(grid["available_slot_ids_by_day"]["1"], [])
+        result = self.client.post(f"/api/v1/schedules/{self.schedule.pk}/quick-cells/", {
+            "group_id": self.requirement.offering.group_id, "weekday": 1, "slot_id": grid["slots"][0]["id"],
+            "span": 2, "subject": "Algoritmos", "teacher": "Ana", "room": "S1",
+        }, format="json", HTTP_IF_MATCH="2")
+        self.assertEqual(result.status_code, 409, result.data)
+        self.assertNotIn("cell_index", result.data)
+        message = " ".join(item["message"] for item in result.data["conflicts"])
+        self.assertIn("Noite 18:30–21:30", message)
+        self.assertIn("17:50–19:50", message)
 
     def test_api_rejects_less_than_eleven_hours_of_teacher_rest(self):
         TimeWindow.objects.create(institution=self.institution, weekday=2, starts_at=time(8), ends_at=time(12))

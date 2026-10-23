@@ -590,6 +590,16 @@
   margin-right: auto;
 }
 
+.profile-slot-preview { margin: 16px 0; display: grid; gap: 10px; max-height: 55vh; overflow: auto; }
+.profile-slot-summary, .profile-slot-card, .profile-slot-list { border: 1px solid #dce5ef; border-radius: 10px; padding: 12px 14px; background: #fff; }
+.profile-slot-summary { display: flex; flex-wrap: wrap; gap: 8px 16px; align-items: center; color: var(--color-text-secondary); font-size: 13px; }
+.profile-slot-summary strong { color: var(--color-text); }
+.profile-slot-card > strong, .profile-slot-list > strong { display: block; margin-bottom: 8px; font-size: 13px; color: var(--color-text); }
+.profile-slot-card > div, .profile-slot-list > div { display: flex; flex-wrap: wrap; gap: 6px; }
+.profile-slot-card span, .profile-slot-list span { display: inline-flex; border-radius: 6px; padding: 5px 8px; background: #eef4fa; color: #28415f; font-size: 12px; }
+.grid-profile-warning { background: #fff4e5; border: 1px solid #f3d4a5; border-radius: 10px; color: #704713; margin: 0 0 12px; display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+.grid-modal input[type="checkbox"] { width: 16px; height: 16px; min-height: 16px; flex: none; padding: 0; }
+
 /* Responsive adjustments */
 @media (max-width: 1024px) {
   .grid-metrics {

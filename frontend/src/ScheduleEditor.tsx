@@ -4,7 +4,7 @@ import { ApiError, api, create, listAll, type Conflict, type RecordItem } from '
 import type { Data } from './App';
 import './schedule.css';
 
-type Schedule = RecordItem & { course: number; term: number; revision: number; published_version: number | null };
+type Schedule = RecordItem & { course: number; term: number; time_profile: number; time_profile_name: string; revision: number; published_version: number | null };
 type Session = RecordItem & { requirement: number; occurrence: number; weekday: number; starts_at: string; ends_at: string; teacher: number; room: number; is_locked: boolean };
 type Validation = { valid: boolean; conflicts: Conflict[] };
 type Mutation = { session: Session | null; revision: number };
@@ -41,6 +41,7 @@ export default function ScheduleEditor({ data }: { data: Data }) {
   const [createOpen, setCreateOpen] = useState(false);
   const [course, setCourse] = useState('');
   const [term, setTerm] = useState('');
+  const [profile, setProfile] = useState('');
   const [form, setForm] = useState({ requirement: '', occurrence: '1', weekday: '1', starts_at: '', teacher: '', room: '', is_locked: false });
   const [conflicts, setConflicts] = useState<Conflict[]>([]);
   const [validation, setValidation] = useState<Validation | null>(null);
@@ -67,7 +68,7 @@ export default function ScheduleEditor({ data }: { data: Data }) {
   useEffect(() => { if (selected) { setSessions([]); setValidation(null); void reloadSelected(selected).catch((reason) => setError(parseFailure(reason, setConflicts))); } }, [selected, reloadSelected]);
 
   const schedule = schedules.find((item) => item.id === selected);
-  const groupIds = useMemo(() => new Set(data['class-groups'].filter((group) => group.course === schedule?.course && group.term === schedule?.term).map((group) => group.id)), [data, schedule]);
+  const groupIds = useMemo(() => new Set(data['class-groups'].filter((group) => group.course === schedule?.course && group.term === schedule?.term && group.time_profile === schedule?.time_profile).map((group) => group.id)), [data, schedule]);
   const offerings = data['subject-offerings'].filter((offering) => groupIds.has(Number(offering.group)));
   const offeringIds = new Set(offerings.map((offering) => offering.id));
   const requirements = data['session-requirements'].filter((requirement) => offeringIds.has(Number(requirement.offering)));
@@ -123,7 +124,7 @@ export default function ScheduleEditor({ data }: { data: Data }) {
     event.preventDefault();
     setBusy(true); setError('');
     try {
-      const result = await create<Schedule>('schedules', { course: Number(course), term: Number(term) });
+      const result = await create<Schedule>('schedules', { course: Number(course), term: Number(term), time_profile: Number(profile) });
       await reloadSchedules(result.id);
       setCreateOpen(false);
     } catch (reason) { setError(parseFailure(reason, setConflicts)); }
@@ -186,7 +187,7 @@ export default function ScheduleEditor({ data }: { data: Data }) {
       {requirements.length ? <div className="info-note">Arraste um encontro para outro dia para verificar a mudança. Clique no encontro para editar dia, horário, professor ou sala pelo formulário.</div> : <div className="info-note">Cadastre ofertas e encontros requeridos para habilitar a alocação.</div>}
     </> : <div className="panel empty-state"><CalendarDays size={32} /><h3>Nenhuma grade criada</h3><p>Crie uma grade para um curso e período letivo após cadastrar as ofertas e os encontros requeridos.</p><button className="button primary" onClick={() => setCreateOpen(true)}><Plus size={17} />Criar grade</button></div>}
 
-    {createOpen && <div className="modal-backdrop" onMouseDown={() => setCreateOpen(false)}><section className="modal" role="dialog" aria-modal="true" aria-labelledby="create-heading" onMouseDown={(event) => event.stopPropagation()}><div className="modal-head"><div><span className="eyebrow">PLANEJAMENTO</span><h2 id="create-heading">Nova grade</h2></div><button className="icon-button" onClick={() => setCreateOpen(false)} aria-label="Fechar"><X size={20} /></button></div><form onSubmit={createSchedule}><div className="form-grid"><label className="form-field">Curso<select required value={course} onChange={(event) => setCourse(event.target.value)}><option value="">Selecione</option>{data.courses.map((item) => <option key={item.id} value={item.id}>{String(item.name)}</option>)}</select></label><label className="form-field">Período letivo<select required value={term} onChange={(event) => setTerm(event.target.value)}><option value="">Selecione</option>{data['academic-terms'].map((item) => <option key={item.id} value={item.id}>{String(item.name)}</option>)}</select></label></div>{error && <p className="form-error" role="alert">{error}</p>}<div className="modal-actions"><button className="button ghost" type="button" onClick={() => setCreateOpen(false)}>Cancelar</button><button className="button primary" disabled={busy} type="submit">Criar grade</button></div></form></section></div>}
+    {createOpen && <div className="modal-backdrop" onMouseDown={() => setCreateOpen(false)}><section className="modal" role="dialog" aria-modal="true" aria-labelledby="create-heading" onMouseDown={(event) => event.stopPropagation()}><div className="modal-head"><div><span className="eyebrow">PLANEJAMENTO</span><h2 id="create-heading">Nova grade</h2></div><button className="icon-button" onClick={() => setCreateOpen(false)} aria-label="Fechar"><X size={20} /></button></div><form onSubmit={createSchedule}><div className="form-grid"><label className="form-field">Curso<select required value={course} onChange={(event) => setCourse(event.target.value)}><option value="">Selecione</option>{data.courses.map((item) => <option key={item.id} value={item.id}>{String(item.name)}</option>)}</select></label><label className="form-field">Período letivo<select required value={term} onChange={(event) => setTerm(event.target.value)}><option value="">Selecione</option>{data['academic-terms'].map((item) => <option key={item.id} value={item.id}>{String(item.name)}</option>)}</select></label><label className="form-field">Turno<select required value={profile} onChange={(event) => setProfile(event.target.value)}><option value="">Selecione</option>{data["time-profiles"].filter((item) => item.is_active).map((item) => <option key={item.id} value={item.id}>{String(item.name)}</option>)}</select></label></div>{error && <p className="form-error" role="alert">{error}</p>}<div className="modal-actions"><button className="button ghost" type="button" onClick={() => setCreateOpen(false)}>Cancelar</button><button className="button primary" disabled={busy} type="submit">Criar grade</button></div></form></section></div>}
 
     {editing && <div className="modal-backdrop" onMouseDown={() => setEditing(null)}><section className="modal" role="dialog" aria-modal="true" aria-labelledby="session-heading" onMouseDown={(event) => event.stopPropagation()}><div className="modal-head"><div><span className="eyebrow">GRADE · REVISÃO {schedule?.revision}</span><h2 id="session-heading">{editing === 'new' ? 'Alocar encontro' : 'Editar encontro'}</h2></div><button className="icon-button" onClick={() => setEditing(null)} aria-label="Fechar"><X size={20} /></button></div><form onSubmit={submitSession}><div className="form-grid">
       <label className="form-field wide">Encontro requerido<select required value={form.requirement} onChange={(event) => updateForm({ requirement: event.target.value, teacher: '', occurrence: '1' })}><option value="">Selecione</option>{requirements.map((item) => <option key={item.id} value={item.id}>{requirementLabel(item.id)} · {String(item.duration_minutes)} min · {String(item.weekly_count)}x/semana</option>)}</select></label>

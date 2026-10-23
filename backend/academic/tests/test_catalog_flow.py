@@ -2,7 +2,7 @@ from django.contrib.auth import get_user_model
 from django.test import TestCase
 from rest_framework.test import APIClient
 
-from academic.models import AcademicTerm, ClassGroup, Course, Institution, SessionRequirement, Subject, SubjectOffering, Teacher
+from academic.models import AcademicTerm, ClassGroup, Course, Institution, SessionRequirement, Subject, SubjectOffering, Teacher, TimeProfile
 
 
 class CatalogFlowTests(TestCase):
@@ -11,11 +11,12 @@ class CatalogFlowTests(TestCase):
         self.client = APIClient()
         self.client.force_authenticate(user)
         self.institution = Institution.objects.create(name="Faculdade")
+        self.night = TimeProfile.objects.create(institution=self.institution, name="Noite")
 
     def test_subject_credits_offer_and_allocation_use_presence_hours(self):
         subject_response = self.client.post("/api/v1/subjects/", {
             "institution": self.institution.pk, "code": "OO", "name": "Programação OO",
-            "credits": 4, "onsite_weekly_hours": 3, "ead_weekly_hours": 1,
+            "credits": 4, "onsite_weekly_hours": 3, "ead_weekly_hours": 1, "period_number": 1,
         }, format="json")
         self.assertEqual(subject_response.status_code, 201, subject_response.data)
         self.assertEqual(subject_response.data["total_workload"], 80)
@@ -24,7 +25,7 @@ class CatalogFlowTests(TestCase):
         setup = self.client.post("/api/v1/schedules/quick-setup/", {
             "institution": "Faculdade", "course_code": "ADS", "course_name": "ADS",
             "term": "2027.1", "starts_on": "2027-01-01", "ends_on": "2027-06-30",
-            "groups": ["1º A"], "weekdays": [1, 2, 3, 4, 5],
+            "groups": ["1º A"], "time_profile_id": self.night.pk, "weekdays": [1, 2, 3, 4, 5],
             "slots": [{"start": "17:50", "end": "18:50"}, {"start": "18:50", "end": "19:50"}, {"start": "19:50", "end": "20:50"}],
         }, format="json")
         self.assertEqual(setup.status_code, 201, setup.data)
@@ -102,10 +103,10 @@ class CatalogFlowTests(TestCase):
     def test_bulk_teacher_assignment_and_open_schedule_from_offers(self):
         course = Course.objects.create(institution=self.institution, code="ADS", name="ADS")
         term = AcademicTerm.objects.create(institution=self.institution, name="2027.1", starts_on="2027-01-01", ends_on="2027-06-30")
-        group = ClassGroup.objects.create(course=course, term=term, code="1A")
+        group = ClassGroup.objects.create(course=course, term=term, code="1A", period_number=1, time_profile=self.night)
         teacher = Teacher.objects.create(institution=self.institution, code="ANA", name="Ana")
-        first = Subject.objects.create(institution=self.institution, code="BD", name="Banco de Dados", credits=4, onsite_weekly_hours=3, ead_weekly_hours=1)
-        second = Subject.objects.create(institution=self.institution, code="WEB", name="Web", credits=2, onsite_weekly_hours=2)
+        first = Subject.objects.create(institution=self.institution, code="BD", name="Banco de Dados", credits=4, onsite_weekly_hours=3, ead_weekly_hours=1, period_number=1)
+        second = Subject.objects.create(institution=self.institution, code="WEB", name="Web", credits=2, onsite_weekly_hours=2, period_number=1)
         schedule_url = "/api/v1/schedules/from-offerings/"
         self.assertEqual(self.client.post(schedule_url, {"group_id": group.pk}, format="json").status_code, 400)
         url = "/api/v1/subject-offerings/bulk-assign/"
@@ -135,9 +136,9 @@ class CatalogFlowTests(TestCase):
     def test_batch_offerings_resolve_group_within_selected_term(self):
         course = Course.objects.create(institution=self.institution, code="ADS", name="ADS")
         term = AcademicTerm.objects.create(institution=self.institution, name="2027.1", starts_on="2027-01-01", ends_on="2027-06-30")
-        ClassGroup.objects.create(course=course, term=term, code="P1", name="1º período A")
+        ClassGroup.objects.create(course=course, term=term, code="P1", name="1º período A", period_number=1, time_profile=self.night)
         Subject.objects.create(institution=self.institution, code="OO", name="Programação OO", credits=4,
-                               onsite_weekly_hours=4, total_workload=80)
+                               onsite_weekly_hours=4, total_workload=80, period_number=1)
         Teacher.objects.create(institution=self.institution, code="ANA", name="Ana")
         response = self.client.post("/api/v1/batch-import/", {"resource": "offerings", "term_id": term.pk, "rows": [
             {"group_code": "P1", "subject_code": "OO", "teacher_code": "ANA", "block_hours": 2},

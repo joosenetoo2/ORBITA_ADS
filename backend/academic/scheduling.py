@@ -47,6 +47,8 @@ def validate_session(session, other_sessions=None):
         add("INVALID_OCCURRENCE", "A ocorrência excede a quantidade semanal requerida.")
     if session.schedule.course_id != group.course_id or session.schedule.term_id != term_id:
         add("SCHEDULE_MISMATCH", "A oferta não pertence ao curso e período da grade.")
+    if session.schedule.time_profile_id != group.time_profile_id:
+        add("PROFILE_MISMATCH", "A turma pertence a outro turno da grade.")
     if session.teacher.institution_id != institution_id or session.room.institution_id != institution_id:
         add("INSTITUTION_MISMATCH", "Professor ou sala pertence a outra instituição.")
     if not session.teacher.is_active or not session.room.is_active or not offering.is_active:
@@ -61,12 +63,20 @@ def validate_session(session, other_sessions=None):
         add("ROOM_FEATURES", "A sala não possui todos os recursos exigidos.", "room", session.room_id)
 
     scopes = matching_scopes(session)
-    windows = [w for w in TimeWindow.objects.filter(institution_id=institution_id, weekday=session.weekday, is_active=True).select_related("profile") if (w.scope, w.scope_id) in scopes and (not w.profile_id or w.profile.is_active)]
-    if not windows or any(
-        not any(w.scope == scope and minutes(w.starts_at) <= start and end <= minutes(w.ends_at) for w in windows)
-        for scope in {w.scope for w in windows}
-    ):
-        add("OUTSIDE_WINDOW", "O encontro não cabe em todas as janelas aplicáveis.")
+    windows = [w for w in TimeWindow.objects.filter(institution_id=institution_id, weekday=session.weekday, is_active=True).select_related("profile") if (w.scope, w.scope_id) in scopes and (not w.profile_id or (w.profile_id == session.schedule.time_profile_id and w.profile.is_active))]
+    profiled_scopes = {window.scope for window in windows if window.profile_id}
+    windows = [window for window in windows if window.profile_id or window.scope not in profiled_scopes]
+    if not windows:
+        add("OUTSIDE_WINDOW", "Não há janela de horário ativa para esta aula. Configure os perfis em Regras de horário.")
+    else:
+        scope_names = {Scope.INSTITUTION: "da instituição", Scope.COURSE: "do curso", Scope.GROUP: "da turma", Scope.TEACHER: "do professor", Scope.ROOM: "da sala", Scope.OFFERING: "da oferta"}
+        day_names = ["", "segunda", "terça", "quarta", "quinta", "sexta", "sábado", "domingo"]
+        for scope in {window.scope for window in windows}:
+            scoped = [window for window in windows if window.scope == scope]
+            if any(minutes(window.starts_at) <= start and end <= minutes(window.ends_at) for window in scoped):
+                continue
+            expected = ", ".join(f"{window.profile.name if window.profile_id else 'sem perfil'} {window.starts_at.strftime('%H:%M')}–{window.ends_at.strftime('%H:%M')}" for window in scoped)
+            add("OUTSIDE_WINDOW", f"A aula {session.starts_at.strftime('%H:%M')}–{session.ends_at.strftime('%H:%M')} não cabe na janela {scope_names[scope]} na {day_names[session.weekday]}: {expected}. Ajuste o perfil em Regras de horário ou escolha outra faixa.")
     for block in TimeBlock.objects.filter(institution_id=institution_id, weekday=session.weekday, is_active=True):
         if (block.scope, block.scope_id) in scopes and overlaps(start, end, minutes(block.starts_at), minutes(block.ends_at)):
             add("TIME_BLOCK", f"O encontro cruza um bloqueio: {block.reason}.")

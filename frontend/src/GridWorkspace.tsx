@@ -26,7 +26,8 @@ type Group = { id: number; code: string; name: string };
 type Slot = { id: number; start: string; end: string };
 type Session = { id: number; group_id: number; weekday: number; start: string; end: string; subject: string; teacher: string; room: string; is_locked?: boolean };
 type Offering = { id: number; group_id: number; subject: string; onsite_weekly_hours: number; teachers: { id: number; name: string }[]; blocks: { duration_minutes: number; remaining: number }[] };
-type Grid = { id: number; revision: number; course: string; term: string; institution: string; weekdays: number[]; groups: Group[]; offerings: Offering[]; slots: Slot[]; sessions: Session[] };
+type Grid = { id: number; revision: number; course: string; term: string; institution: string; time_profile: number | null; time_profile_name: string; weekdays: number[]; profiles_active: boolean; profile_slots_in_sync: boolean; available_slot_ids_by_day: Record<string, number[]>; groups: Group[]; offerings: Offering[]; slots: Slot[]; sessions: Session[] };
+type ProfileStructure = { profiles: { id: number; name: string; windows: { weekday: number; start: string; end: string }[] }[]; weekdays: number[]; slots: { start: string; end: string }[] };
 type Cell = { group_id: number; weekday: number; slot_id: number; span: number; subject: string; teacher: string; room: string; session_id?: number; is_locked?: boolean };
 
 const days = ['Segunda', 'Terça', 'Quarta', 'Quinta', 'Sexta', 'Sábado', 'Domingo'];
@@ -173,7 +174,7 @@ function parseLesson(value: string) {
   throw new Error(`Formato da célula não reconhecido: "${value.slice(0, 50)}". Informe:\nLinha 1: Disciplina\nLinha 2: Professor - Sala`);
 }
 
-export default function GridWorkspace({ onSetup, onOpenOffers, initialScheduleId }: { onSetup?: () => void; onOpenOffers?: () => void; initialScheduleId?: number | null }) {
+export default function GridWorkspace({ onSetup, onOpenOffers, onOpenTimeProfiles, initialScheduleId }: { onSetup?: () => void; onOpenOffers?: () => void; onOpenTimeProfiles?: () => void; initialScheduleId?: number | null }) {
   const [schedules, setSchedules] = useState<RecordItem[]>([]);
   const [scheduleId, setScheduleId] = useState<number | null>(null);
   const [grid, setGrid] = useState<Grid | null>(null);
@@ -183,7 +184,10 @@ export default function GridWorkspace({ onSetup, onOpenOffers, initialScheduleId
   const [dragged, setDragged] = useState<Session | null>(null);
   const [dragHover, setDragHover] = useState('');
   const [setup, setSetup] = useState(false);
+  const [deleteOpen, setDeleteOpen] = useState(false);
   const [slotSetup, setSlotSetup] = useState(false);
+  const [profileStructure, setProfileStructure] = useState<ProfileStructure | null>(null);
+  const [loadingProfiles, setLoadingProfiles] = useState(false);
   const [paste, setPaste] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
@@ -197,6 +201,8 @@ export default function GridWorkspace({ onSetup, onOpenOffers, initialScheduleId
   const [startsOn, setStartsOn] = useState('');
   const [endsOn, setEndsOn] = useState('');
   const [groupsText, setGroupsText] = useState('');
+  const [profileId, setProfileId] = useState('');
+  const [profiles, setProfiles] = useState<RecordItem[]>([]);
   const [slotsText, setSlotsText] = useState('17:50-18:50\n18:50-19:50\n19:50-20:50\n20:50-21:50');
   const [weekdays, setWeekdays] = useState([1, 2, 3, 4, 5]);
 
@@ -206,6 +212,8 @@ export default function GridWorkspace({ onSetup, onOpenOffers, initialScheduleId
   const [pasteDay, setPasteDay] = useState(1);
   const [pasteSlot, setPasteSlot] = useState(0);
   const [rooms, setRooms] = useState<RecordItem[]>([]);
+  const [profileWindows, setProfileWindows] = useState<RecordItem[]>([]);
+  const hasProfileWindows = profileWindows.some((window) => window.is_active && Number(window.profile) === Number(profileId));
 
   const loadSchedules = useCallback(async () => {
     const rows = await listAll<RecordItem>('schedules');
@@ -222,8 +230,13 @@ export default function GridWorkspace({ onSetup, onOpenOffers, initialScheduleId
   }, [loadSchedules]);
 
   useEffect(() => {
-    void listAll('rooms')
-      .then(setRooms)
+    void Promise.all([listAll('rooms'), listAll('time-profiles'), listAll('time-windows')])
+      .then(([roomRows, profiles, windows]) => {
+        setRooms(roomRows);
+        setProfiles(profiles.filter((profile) => profile.is_active));
+        setProfileId((current) => current || String(profiles.find((profile) => profile.is_active)?.id ?? ''));
+        setProfileWindows(windows);
+      })
       .catch(() => undefined);
   }, []);
 
@@ -243,13 +256,15 @@ export default function GridWorkspace({ onSetup, onOpenOffers, initialScheduleId
   const cellOfferings = grid?.offerings.filter((item) => item.group_id === editor?.group_id) ?? [];
   const cellOffering = cellOfferings.find((item) => item.subject === editor?.subject);
   const cellTeachers = cellOffering?.teachers ?? [];
+  const slotAllowed = (day: number, slotId: number) => !grid?.profiles_active || (grid.available_slot_ids_by_day[String(day)] ?? []).includes(slotId);
+  const editorStartSlots = grid?.slots.filter((slot) => editor && (slotAllowed(editor.weekday, slot.id) || (editor.session_id && editor.slot_id === slot.id))) ?? [];
   const availableSpans = useMemo(() => {
     if (!grid || !editor || !cellOffering) return [];
     const start = grid.slots.findIndex((slot) => slot.id === editor.slot_id);
     if (start < 0) return [];
     return grid.slots.slice(start).map((_, index) => {
       const chosen = grid.slots.slice(start, start + index + 1);
-      const contiguous = chosen.every((slot, offset) => !offset || chosen[offset - 1].end === slot.start);
+      const contiguous = chosen.every((slot, offset) => slotAllowed(editor.weekday, slot.id) && (!offset || chosen[offset - 1].end === slot.start));
       const [beginHour, beginMinute] = chosen[0].start.split(':').map(Number);
       const [endHour, endMinute] = chosen[chosen.length - 1].end.split(':').map(Number);
       const minutes = endHour * 60 + endMinute - beginHour * 60 - beginMinute;
@@ -296,7 +311,7 @@ export default function GridWorkspace({ onSetup, onOpenOffers, initialScheduleId
     setError('');
     setBusy(true);
     try {
-      const slots = slotsText
+      const slots = (hasProfileWindows ? '' : slotsText)
         .split(/\n/)
         .map((line) => line.trim())
         .filter(Boolean)
@@ -312,8 +327,9 @@ export default function GridWorkspace({ onSetup, onOpenOffers, initialScheduleId
           starts_on: startsOn,
           ends_on: endsOn,
           groups: groupsText.split(/[\n,;]/).map((item) => item.trim()).filter(Boolean),
+          time_profile_id: Number(profileId),
           slots,
-          weekdays
+          weekdays: hasProfileWindows ? [] : weekdays
         })
       });
       await loadSchedules();
@@ -329,12 +345,30 @@ export default function GridWorkspace({ onSetup, onOpenOffers, initialScheduleId
     }
   }
 
-  function openSlotSetup() {
+  async function deleteSchedule() {
     if (!grid) return;
-    setSlotsText(grid.slots.length ? '' : '17:50-18:50\n18:50-19:50\n19:50-20:50\n20:50-21:50');
-    setWeekdays(grid.weekdays.length ? grid.weekdays : [1, 2, 3, 4, 5]);
+    setBusy(true); setError('');
+    try {
+      await api(`schedules/${grid.id}/`, { method: 'DELETE' });
+      const rows = await listAll<RecordItem>('schedules');
+      setSchedules(rows);
+      setGrid(null);
+      setScheduleId(rows[0]?.id ?? null);
+      setDeleteOpen(false);
+      setNotice('Grade excluída. As turmas e ofertas continuam disponíveis para criar outra grade.');
+    } catch (reason) { setError(errorText(reason)); }
+    finally { setBusy(false); }
+  }
+
+  async function openSlotSetup() {
+    if (!grid) return;
+    setProfileStructure(null);
     setError('');
     setSlotSetup(true);
+    setLoadingProfiles(true);
+    try { setProfileStructure(await api<ProfileStructure>(`schedules/${grid.id}/profile-slots/`)); }
+    catch (reason) { setError(errorText(reason)); }
+    finally { setLoadingProfiles(false); }
   }
 
   async function submitSlotSetup(event: FormEvent) {
@@ -343,20 +377,14 @@ export default function GridWorkspace({ onSetup, onOpenOffers, initialScheduleId
     setError('');
     setBusy(true);
     try {
-      const slots = slotsText
-        .split(/\n/)
-        .map((line) => line.trim())
-        .filter(Boolean)
-        .map(parseSlotLine);
-
       await api(`schedules/${grid.id}/configure-grid/`, {
         method: 'POST',
         headers: { 'If-Match': String(grid.revision) },
-        body: JSON.stringify({ slots, weekdays })
+        body: JSON.stringify({ use_profiles: true })
       });
       await loadGrid(grid.id);
       setSlotSetup(false);
-      setNotice('Horários configurados. Clique nas células para alocar aulas.');
+      setNotice('Grade atualizada com as janelas dos perfis vigentes. As aulas alocadas foram preservadas.');
     } catch (reason) {
       setError(errorText(reason));
     } finally {
@@ -409,7 +437,7 @@ export default function GridWorkspace({ onSetup, onOpenOffers, initialScheduleId
     if (!grid || busy || session.group_id !== groupId || session.is_locked) return false;
     const span = sessionSpan(session);
     const chosen = grid.slots.slice(slotIndex, slotIndex + span);
-    if (chosen.length !== span || chosen.some((slot, index) => index > 0 && chosen[index - 1].end !== slot.start)) return false;
+    if (chosen.length !== span || chosen.some((slot, index) => !slotAllowed(day, slot.id) || (index > 0 && chosen[index - 1].end !== slot.start))) return false;
     const start = chosen[0].start, end = chosen[chosen.length - 1].end;
     return !grid.sessions.some((item) => item.id !== session.id && item.group_id === groupId && item.weekday === day && item.start < end && start < item.end);
   }
@@ -635,7 +663,7 @@ export default function GridWorkspace({ onSetup, onOpenOffers, initialScheduleId
                               )}
                             </div>
                           </button>
-                        ) : isGroup ? (
+                        ) : isGroup && slotAllowed(day, slot.id) ? (
                           <button
                             type="button"
                             className="sheet-empty"
@@ -764,6 +792,7 @@ export default function GridWorkspace({ onSetup, onOpenOffers, initialScheduleId
           </div>
 
           {/* Timetable Toolbar Card */}
+          {grid.profiles_active && !grid.profile_slots_in_sync && <div className="catalog-hint-banner grid-profile-warning" role="alert">As faixas desta grade ainda não correspondem às janelas dos perfis vigentes. Atualize a grade antes de alocar aulas. <button type="button" className="button small" onClick={() => void openSlotSetup()}>Atualizar pelas janelas</button></div>}
           <div className="catalog-hint-banner">Na grade, apenas disciplinas ofertadas para cada turma e seus professores vinculados podem ser alocados. <button type="button" className="button small" onClick={onOpenOffers}>Preparar ofertas</button></div>
           <div className="sheet-toolbar-card">
             <div className="sheet-toolbar-top">
@@ -776,10 +805,11 @@ export default function GridWorkspace({ onSetup, onOpenOffers, initialScheduleId
                 >
                   {schedules.map((row) => (
                     <option key={row.id} value={row.id}>
-                      {String(row.course_name ?? `Curso #${row.course}`)} · {String(row.term_name ?? `Período #${row.term}`)}
+                      {String(row.course_name ?? `Curso #${row.course}`)} · {String(row.term_name ?? `Período #${row.term}`)} · {String(row.time_profile_name ?? 'Sem turno')}
                     </option>
                   ))}
                 </select>
+                <button type="button" className="button small danger ghost" onClick={() => setDeleteOpen(true)}>Excluir grade</button>
               </div>
 
               {/* View Switcher & Action Tools */}
@@ -910,38 +940,15 @@ export default function GridWorkspace({ onSetup, onOpenOffers, initialScheduleId
             </div>
             <form onSubmit={submitSlotSetup}>
               <p className="sheet-helper">
-                Informe um intervalo de início e fim por linha (formato HH:MM-HH:MM). As aulas já alocadas serão preservadas.
+                Os dias e as faixas abaixo vêm das janelas ativas dos perfis de horário. Atualize as janelas em Regras de horário; as aulas já alocadas serão preservadas.
               </p>
-              <label className="form-field wide" style={{ marginTop: 14 }}>
-                Faixas de horário
-                <textarea
-                  required
-                  value={slotsText}
-                  onChange={(event) => setSlotsText(event.target.value)}
-                  placeholder={'17:50-18:50\n18:50-19:50\n19:50-20:50\n20:50-21:50'}
-                />
-              </label>
-              <div className="grid-weekdays">
-                <div className="grid-weekdays-title">Dias de aula ativos na grade</div>
-                <div className="grid-weekdays-list">
-                  {days.map((name, index) => (
-                    <label key={name}>
-                      <input
-                        type="checkbox"
-                        checked={weekdays.includes(index + 1)}
-                        onChange={(event) =>
-                          setWeekdays(
-                            event.target.checked
-                              ? [...weekdays, index + 1].sort()
-                              : weekdays.filter((day) => day !== index + 1)
-                          )
-                        }
-                      />
-                      {name}
-                    </label>
-                  ))}
-                </div>
-              </div>
+              {loadingProfiles && <p className="sheet-helper">Carregando janelas dos perfis…</p>}
+              {profileStructure && <div className="profile-slot-preview">
+                <div className="profile-slot-summary"><strong>{profileStructure.profiles.length} perfil(is) ativo(s)</strong><span>{profileStructure.weekdays.map((day) => days[day - 1]).join(', ') || 'Nenhum dia configurado'}</span><span>{profileStructure.slots.length} faixa(s) de 1 hora-aula</span></div>
+                {profileStructure.profiles.map((profile) => <div className="profile-slot-card" key={profile.id}><strong>{profile.name}</strong><div>{profile.windows.length ? profile.windows.map((window) => <span key={`${window.weekday}-${window.start}-${window.end}`}>{days[window.weekday - 1]} {window.start}–{window.end}</span>) : <span>Sem janelas aplicáveis a este curso</span>}</div></div>)}
+                {profileStructure.slots.length > 0 && <div className="profile-slot-list"><strong>Faixas que serão usadas na grade</strong><div>{profileStructure.slots.map((slot) => <span key={`${slot.start}-${slot.end}`}>{slot.start}–{slot.end}</span>)}</div></div>}
+                {!profileStructure.slots.length && <p className="form-error">Configure pelo menos uma janela ativa nos perfis de horário para este curso.</p>}
+              </div>}
               {error && (
                 <p className="form-error" role="alert">
                   <CircleAlert size={16} />
@@ -949,14 +956,26 @@ export default function GridWorkspace({ onSetup, onOpenOffers, initialScheduleId
                 </p>
               )}
               <div className="modal-actions">
+                <button className="button" type="button" onClick={() => { setSlotSetup(false); onOpenTimeProfiles?.(); }}>Editar perfis e janelas</button>
                 <button className="button ghost" type="button" onClick={() => setSlotSetup(false)}>
                   Cancelar
                 </button>
-                <button className="button primary" disabled={busy}>
-                  {busy ? 'Salvando…' : 'Salvar e aplicar na grade'}
+                <button className="button primary" disabled={busy || loadingProfiles || !profileStructure?.slots.length}>
+                  {busy ? 'Aplicando…' : 'Aplicar janelas na grade'}
                 </button>
               </div>
             </form>
+          </section>
+        </div>
+      )}
+
+      {deleteOpen && grid && (
+        <div className="modal-backdrop" onMouseDown={() => setDeleteOpen(false)}>
+          <section className="modal grid-modal" role="dialog" aria-modal="true" aria-labelledby="delete-grade-title" onMouseDown={(event) => event.stopPropagation()}>
+            <div className="modal-head"><div><span className="eyebrow">CONFIRMAR EXCLUSÃO</span><h2 id="delete-grade-title">Excluir grade?</h2></div><button className="icon-button" onClick={() => setDeleteOpen(false)} aria-label="Fechar"><X size={20} /></button></div>
+            <p>Apagar a grade de <strong>{grid.time_profile_name}</strong> de {grid.course} · {grid.term}? As aulas alocadas e as versões desta grade serão removidas. Turmas, disciplinas e ofertas permanecem cadastradas.</p>
+            {error && <p className="form-error" role="alert">{error}</p>}
+            <div className="modal-actions"><button type="button" className="button ghost" onClick={() => setDeleteOpen(false)}>Cancelar</button><button type="button" className="button danger" disabled={busy} onClick={() => void deleteSchedule()}>{busy ? 'Excluindo…' : 'Excluir grade'}</button></div>
           </section>
         </div>
       )}
@@ -1018,6 +1037,7 @@ export default function GridWorkspace({ onSetup, onOpenOffers, initialScheduleId
                     placeholder="2026.2"
                   />
                 </label>
+                <label className="form-field">Turno / perfil de horários<select required value={profileId} onChange={(event) => setProfileId(event.target.value)}><option value="">Selecione…</option>{profiles.map((profile) => <option key={profile.id} value={profile.id}>{String(profile.name)}</option>)}</select></label>
                 <label className="form-field">
                   Início das aulas
                   <input
@@ -1045,17 +1065,17 @@ export default function GridWorkspace({ onSetup, onOpenOffers, initialScheduleId
                     placeholder={'1º A\n1º C\n2º A\n3º A'}
                   />
                 </label>
-                <label className="form-field wide">
+                {!hasProfileWindows && <label className="form-field wide">
                   Faixas de horário (uma por linha, formato HH:MM-HH:MM)
                   <textarea
                     required
                     value={slotsText}
                     onChange={(event) => setSlotsText(event.target.value)}
                   />
-                </label>
+                </label>}
               </div>
 
-              <div className="grid-weekdays">
+              {hasProfileWindows ? <p className="sheet-helper">As faixas e os dias desta nova grade serão definidos pelas janelas ativas dos perfis de horário.</p> : <div className="grid-weekdays">
                 <div className="grid-weekdays-title">Dias de aula ativos</div>
                 <div className="grid-weekdays-list">
                   {days.map((name, index) => (
@@ -1075,7 +1095,7 @@ export default function GridWorkspace({ onSetup, onOpenOffers, initialScheduleId
                     </label>
                   ))}
                 </div>
-              </div>
+              </div>}
 
               {error && (
                 <p className="form-error" role="alert">
@@ -1124,7 +1144,11 @@ export default function GridWorkspace({ onSetup, onOpenOffers, initialScheduleId
                   Dia da semana
                   <select
                     value={editor.weekday}
-                    onChange={(event) => setEditor({ ...editor, weekday: Number(event.target.value) })}
+                    onChange={(event) => {
+                      const day = Number(event.target.value);
+                      const first = grid.slots.find((slot) => slotAllowed(day, slot.id));
+                      setEditor({ ...editor, weekday: day, slot_id: first?.id ?? editor.slot_id, span: 1 });
+                    }}
                   >
                     {activeDays.map((day) => (
                       <option key={day} value={day}>
@@ -1140,7 +1164,7 @@ export default function GridWorkspace({ onSetup, onOpenOffers, initialScheduleId
                     value={editor.slot_id}
                     onChange={(event) => setEditor({ ...editor, slot_id: Number(event.target.value), span: 1 })}
                   >
-                    {grid.slots.map((item) => (
+                    {editorStartSlots.map((item) => (
                       <option key={item.id} value={item.id}>
                         {item.start} – {item.end}
                       </option>
@@ -1181,14 +1205,14 @@ export default function GridWorkspace({ onSetup, onOpenOffers, initialScheduleId
                 </label>
 
                 <label className="form-field wide">
-                  Duração (faixas consecutivas)
+                  Duração da aula
                   <select
                     value={editor.span}
                     onChange={(event) => setEditor({ ...editor, span: Number(event.target.value) })}
                   >
                     {availableSpans.map((span) => (
                       <option key={span} value={span}>
-                        {span} {span === 1 ? 'faixa horária' : 'faixas horárias consecutivas'}
+                        {span} {span === 1 ? 'aula' : 'aulas'} · {span} {span === 1 ? 'hora' : 'horas'} ({span} {span === 1 ? 'faixa' : 'faixas'} consecutivas)
                       </option>
                     ))}
                   </select>
@@ -1210,8 +1234,9 @@ export default function GridWorkspace({ onSetup, onOpenOffers, initialScheduleId
               </div>
 
               <p className="sheet-helper">
-                Escolha uma oferta da turma e um professor vinculado. A sala pode ser informada ao salvar.
+                Cada faixa da grade corresponde a 1 hora-aula de 60 minutos. A duração mostra apenas os blocos previstos na oferta que cabem no dia e horário escolhidos. A sala pode ser informada ao salvar.
               </p>
+              {cellOffering && <p className="sheet-helper">Blocos ainda previstos para esta oferta: {cellOffering.blocks.filter((block) => block.remaining > 0).map((block) => `${block.remaining} × ${block.duration_minutes / 60} h`).join(' · ') || 'nenhum'}. Para mudar a distribuição dos blocos, ajuste a oferta.</p>}
               {!cellOfferings.length && <p className="form-error">Esta turma ainda não tem disciplinas ofertadas. <button type="button" className="button small" onClick={() => { setEditor(null); onOpenOffers?.(); }}>Abrir ofertas</button></p>}
               {cellOffering && !availableSpans.length && <p className="form-error">Não há bloco presencial disponível que caiba a partir desta faixa. Escolha outra faixa ou disciplina.</p>}
 

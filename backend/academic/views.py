@@ -7,14 +7,14 @@ from django.db.models.deletion import ProtectedError
 from django.shortcuts import get_object_or_404
 from rest_framework import status, viewsets
 from rest_framework.decorators import action
-from rest_framework.exceptions import MethodNotAllowed, ValidationError
+from rest_framework.exceptions import ValidationError
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from . import models, serializers
 from .permissions import AcademicPermission
 from .scheduling import candidate_starts, validate_session
-from .quick_grid import GridConflict, delete_cell, make_code, parse_time, save_cell
+from .quick_grid import GridConflict, delete_cell, make_code, parse_time, reconcile, save_cell
 from .catalog_flow import offer_subject
 
 
@@ -173,8 +173,9 @@ class BatchImportView(APIView):
                         if "ead_percentage" in row:
                             raise ValidationError({"ead_weekly_hours": "Este CSV usa percentual EAD. Substitua a coluna por horas_ead e informe horas semanais."})
                         ead = self._integer(row.get("ead_weekly_hours", 0) or 0, "ead_weekly_hours", maximum=credits)
+                        period_number = self._integer(row.get("period_number"), "period_number", minimum=1, maximum=20)
                         obj = models.Subject(institution=institution, code=code, name=name, credits=credits,
-                                             onsite_weekly_hours=onsite, ead_weekly_hours=ead,
+                                             onsite_weekly_hours=onsite, ead_weekly_hours=ead, period_number=period_number,
                                              total_workload=credits * 20, workload_unit=models.Subject.Unit.CLASS_HOUR)
                     elif resource == "teachers":
                         if models.Teacher.objects.filter(institution=institution, code__iexact=code).exists():
@@ -189,7 +190,12 @@ class BatchImportView(APIView):
                     elif resource == "class-groups":
                         if models.ClassGroup.objects.filter(term=group_term, code__iexact=code).exists():
                             skipped += 1; continue
-                        obj = models.ClassGroup(course=group_course, term=group_term, code=code, name=name or code)
+                        period_number = self._integer(row.get("period_number"), "period_number", minimum=1, maximum=20)
+                        profile_name = str(row.get("time_profile", "")).strip()
+                        profile = models.TimeProfile.objects.filter(institution=institution, name__iexact=profile_name, is_active=True).first()
+                        if not profile:
+                            raise ValidationError({"time_profile": "Informe um perfil de horário ativo, como Manhã ou Noite."})
+                        obj = models.ClassGroup(course=group_course, term=group_term, code=code, name=name or code, period_number=period_number, time_profile=profile)
                     else:
                         group = models.ClassGroup.objects.filter(term=group_term, code__iexact=str(row.get("group_code", "")).strip()).first()
                         subject = models.Subject.objects.filter(institution=institution, code__iexact=str(row.get("subject_code", "")).strip()).first()
@@ -320,12 +326,88 @@ class TimeBlockViewSet(SafeTimeConfigurationMixin, AcademicViewSet):
 
 
 class ScheduleViewSet(AcademicViewSet):
-    queryset = models.Schedule.objects.select_related("course", "term").all().order_by("pk")
+    queryset = models.Schedule.objects.select_related("course", "term", "time_profile").all().order_by("pk")
     serializer_class = serializers.ScheduleSerializer
     http_method_names = ["get", "post", "delete", "head", "options"]
 
     def destroy(self, request, *args, **kwargs):
-        raise MethodNotAllowed("DELETE")
+        schedule = self.get_object()
+        with transaction.atomic():
+            grade_requirement_ids = list(schedule.sessions.filter(requirement__kind="GRADE").values_list("requirement_id", flat=True).distinct())
+            schedule.versions.all().delete()
+            schedule.sessions.all().delete()
+            for requirement in models.SessionRequirement.objects.filter(pk__in=grade_requirement_ids):
+                reconcile(requirement)
+            schedule_id = schedule.pk
+            schedule.delete()
+            models.AuditEvent.objects.create(actor=request.user, action="SCHEDULE_DELETED", entity="Schedule", entity_id=str(schedule_id))
+        return Response(status=status.HTTP_204_NO_CONTENT)
+
+    @staticmethod
+    def _profile_structure(schedule):
+        institution = schedule.course.institution
+        group_ids = set(models.ClassGroup.objects.filter(course=schedule.course, term=schedule.term, time_profile=schedule.time_profile).values_list("pk", flat=True))
+        profiles = list(models.TimeProfile.objects.filter(pk=schedule.time_profile_id, institution=institution, is_active=True))
+        windows = list(models.TimeWindow.objects.filter(institution=institution, profile__in=profiles, is_active=True).order_by("weekday", "starts_at"))
+        applicable = [window for window in windows if window.scope == models.Scope.INSTITUTION or
+                      (window.scope == models.Scope.COURSE and window.scope_id == schedule.course_id) or
+                      (window.scope == models.Scope.GROUP and window.scope_id in group_ids)]
+        minutes_per_class = institution.class_minutes
+        slots = set()
+        daily_slots = {}
+        weekdays = set()
+        details = []
+        for profile in profiles:
+            own = [window for window in applicable if window.profile_id == profile.pk]
+            details.append({"id": profile.pk, "name": profile.name, "windows": [
+                {"weekday": window.weekday, "start": window.starts_at.strftime("%H:%M"), "end": window.ends_at.strftime("%H:%M")}
+                for window in own]})
+            for window in own:
+                start = window.starts_at.hour * 60 + window.starts_at.minute
+                end = window.ends_at.hour * 60 + window.ends_at.minute
+                if (end - start) % minutes_per_class:
+                    raise ValidationError({"windows": f"A janela {profile.name}, dia {window.weekday}, precisa conter horas-aula completas de {minutes_per_class} minutos."})
+                weekdays.add(window.weekday)
+                for minute in range(start, end, minutes_per_class):
+                    slots.add((minute, minute + minutes_per_class))
+                    daily_slots.setdefault(window.weekday, set()).add((minute, minute + minutes_per_class))
+        ordered = sorted(slots)
+        if any(left[1] > right[0] for left, right in zip(ordered, ordered[1:])):
+            raise ValidationError({"windows": "As janelas dos perfis geram faixas de aula sobrepostas. Ajuste os perfis."})
+        return {"profiles": details, "weekdays": sorted(weekdays), "daily_slots": {day: sorted(values) for day, values in daily_slots.items()}, "slots": [
+            {"start": f"{start // 60:02d}:{start % 60:02d}", "end": f"{end // 60:02d}:{end % 60:02d}"}
+            for start, end in ordered]}
+
+    @action(detail=True, methods=["get"], url_path="profile-slots")
+    def profile_slots(self, request, pk=None):
+        return Response(self._profile_structure(self.get_object()))
+
+    @staticmethod
+    def _check_profile_sessions(schedule, structure):
+        weekdays = set(structure["weekdays"])
+        for session in schedule.sessions.all():
+            if session.weekday not in weekdays:
+                raise ValidationError({"profiles": f"A aula #{session.pk} usa um dia ausente dos perfis ativos. Ajuste a janela antes de aplicar."})
+            cursor = session.starts_at.hour * 60 + session.starts_at.minute
+            end_minute = session.ends_at.hour * 60 + session.ends_at.minute
+            for start, end in structure["daily_slots"][session.weekday]:
+                if start == cursor and end <= end_minute:
+                    cursor = end
+            if cursor != end_minute:
+                raise ValidationError({"profiles": f"A aula #{session.pk} não cabe nas faixas atuais dos perfis. Ajuste a janela antes de aplicar."})
+
+    @classmethod
+    def _apply_profile_structure(cls, schedule):
+        structure = cls._profile_structure(schedule)
+        if not structure["slots"]:
+            raise ValidationError({"profiles": "Configure janelas ativas nos perfis de horário antes de montar a grade."})
+        cls._check_profile_sessions(schedule, structure)
+        desired = {(parse_time(item["start"]), parse_time(item["end"])) for item in structure["slots"]}
+        for slot in schedule.slots.all():
+            if (slot.starts_at, slot.ends_at) not in desired:
+                slot.delete()
+        cls._configure_slots(schedule, structure["slots"], structure["weekdays"])
+        return structure
 
     @staticmethod
     def _grid_blocks(offer):
@@ -342,10 +424,12 @@ class ScheduleViewSet(AcademicViewSet):
     @action(detail=False, methods=["post"], url_path="from-offerings")
     def from_offerings(self, request):
         group = get_object_or_404(models.ClassGroup, pk=request.data.get("group_id"), is_active=True)
+        if not group.time_profile_id:
+            raise ValidationError({"group_id": "Defina o turno da turma antes de criar a grade."})
         if not models.SubjectOffering.objects.filter(group=group, is_active=True).exists():
             raise ValidationError({"group_id": "Oferte ao menos uma disciplina para esta turma antes de criar a grade."})
         with transaction.atomic():
-            schedule, created = models.Schedule.objects.get_or_create(course=group.course, term=group.term)
+            schedule, created = models.Schedule.objects.get_or_create(course=group.course, term=group.term, time_profile=group.time_profile)
             models.AuditEvent.objects.create(actor=request.user, action="GRID_OPENED_FROM_OFFERINGS", entity="Schedule", entity_id=str(schedule.pk), metadata={"group_id": group.pk, "created": created})
         return Response({"id": schedule.pk, "created": created}, status=status.HTTP_201_CREATED if created else status.HTTP_200_OK)
 
@@ -397,11 +481,18 @@ class ScheduleViewSet(AcademicViewSet):
         with transaction.atomic():
             schedule = models.Schedule.objects.select_for_update().get(pk=self.get_object().pk)
             self._check_revision(request, schedule)
-            self._configure_slots(schedule, request.data.get("slots"), request.data.get("weekdays"))
+            if request.data.get("use_profiles"):
+                structure = self._apply_profile_structure(schedule)
+                slot_values, weekdays = structure["slots"], structure["weekdays"]
+            else:
+                if models.TimeWindow.objects.filter(institution=schedule.course.institution, profile=schedule.time_profile, profile__is_active=True, is_active=True).exists():
+                    raise ValidationError({"profiles": "As faixas desta grade vêm dos perfis de horário. Atualize a grade a partir das janelas vigentes."})
+                slot_values, weekdays = request.data.get("slots"), request.data.get("weekdays")
+                self._configure_slots(schedule, slot_values, weekdays)
             schedule.revision = F("revision") + 1
             schedule.save(update_fields=["revision", "updated_at"])
             schedule.refresh_from_db(fields=["revision"])
-            models.AuditEvent.objects.create(actor=request.user, action="GRID_SLOTS_CONFIGURED", entity="Schedule", entity_id=str(schedule.pk), metadata={"slots": request.data.get("slots"), "weekdays": request.data.get("weekdays")})
+            models.AuditEvent.objects.create(actor=request.user, action="GRID_SLOTS_CONFIGURED", entity="Schedule", entity_id=str(schedule.pk), metadata={"slots": slot_values, "weekdays": weekdays, "use_profiles": bool(request.data.get("use_profiles"))})
             return Response({"revision": schedule.revision, "slot_count": schedule.slots.count()})
 
     @action(detail=False, methods=["post"], url_path="quick-setup")
@@ -413,12 +504,12 @@ class ScheduleViewSet(AcademicViewSet):
         try:
             starts_on, ends_on = date.fromisoformat(data["starts_on"]), date.fromisoformat(data["ends_on"])
             groups = [str(value).strip() for value in data["groups"]]
-            slot_values = data["slots"]
+            slot_values = data.get("slots") or []
             weekdays = [int(value) for value in data.get("weekdays", [1, 2, 3, 4, 5])]
         except (KeyError, TypeError, ValueError):
             raise ValidationError({"setup": "Confira as datas, turmas, faixas e dias."})
-        if starts_on > ends_on or not groups or not slot_values or not weekdays or any(day not in range(1, 8) for day in weekdays):
-            raise ValidationError({"setup": "Informe datas válidas e ao menos uma turma, faixa e dia."})
+        if starts_on > ends_on or not groups or any(day not in range(1, 8) for day in weekdays):
+            raise ValidationError({"setup": "Informe datas válidas e ao menos uma turma."})
         if len(groups) != len(set(groups)) or any(not value or len(value) > 50 for value in groups):
             raise ValidationError({"groups": "As turmas devem ter nomes únicos com até 50 caracteres."})
         with transaction.atomic():
@@ -431,33 +522,52 @@ class ScheduleViewSet(AcademicViewSet):
             term, created = models.AcademicTerm.objects.get_or_create(institution=institution, name=data["term"].strip(), defaults={"starts_on": starts_on, "ends_on": ends_on})
             if not created and (term.starts_on != starts_on or term.ends_on != ends_on):
                 raise ValidationError({"term": "O período existente possui outras datas."})
-            schedule, _ = models.Schedule.objects.get_or_create(course=course, term=term)
+            profile = get_object_or_404(models.TimeProfile, pk=data.get("time_profile_id"), institution=institution, is_active=True)
+            schedule, _ = models.Schedule.objects.get_or_create(course=course, term=term, time_profile=profile)
             for code in groups:
                 previous = models.ClassGroup.objects.filter(term=term, code=code).first()
                 if previous and previous.course_id != course.pk:
                     raise ValidationError({"groups": f"A turma {code} pertence a outro curso."})
-                models.ClassGroup.objects.get_or_create(course=course, term=term, code=code)
-            self._configure_slots(schedule, slot_values, weekdays)
+                if previous and previous.time_profile_id != profile.pk:
+                    raise ValidationError({"groups": f"A turma {code} pertence a outro turno."})
+                models.ClassGroup.objects.get_or_create(course=course, term=term, code=code, defaults={"time_profile": profile, "period_number": int(''.join(ch for ch in code if ch.isdigit())[:2] or 1)})
+            if models.TimeWindow.objects.filter(institution=institution, profile=profile, profile__is_active=True, is_active=True).exists():
+                self._apply_profile_structure(schedule)
+            else:
+                if not slot_values or not weekdays:
+                    raise ValidationError({"setup": "Configure as janelas dos perfis ou informe faixas e dias para a primeira grade."})
+                self._configure_slots(schedule, slot_values, weekdays)
             models.AuditEvent.objects.create(actor=request.user, action="GRID_QUICK_SETUP", entity="Schedule", entity_id=str(schedule.pk), metadata={"groups": groups})
             return Response({"id": schedule.pk}, status=status.HTTP_201_CREATED)
 
     @action(detail=True, methods=["get"])
     def grid(self, request, pk=None):
         schedule = self.get_object()
-        groups = models.ClassGroup.objects.filter(course=schedule.course, term=schedule.term, is_active=True).order_by("code")
+        profile_structure = self._profile_structure(schedule)
+        active_weekdays = profile_structure["weekdays"] if profile_structure["slots"] else list(models.TimeWindow.objects.filter(institution=schedule.course.institution, scope=models.Scope.COURSE, scope_id=schedule.course_id, is_active=True).values_list("weekday", flat=True).distinct().order_by("weekday"))
+        schedule_slots = list(schedule.slots.all())
+        configured_slots = {(slot.starts_at.strftime("%H:%M"), slot.ends_at.strftime("%H:%M")) for slot in schedule_slots}
+        current_profile_slots = {(item["start"], item["end"]) for item in profile_structure["slots"]}
+        allowed_slots = {str(day): [slot.pk for slot in schedule_slots if
+                          (slot.starts_at.hour * 60 + slot.starts_at.minute, slot.ends_at.hour * 60 + slot.ends_at.minute) in values]
+                         for day, values in profile_structure["daily_slots"].items()} if profile_structure["slots"] else {}
+        groups = models.ClassGroup.objects.filter(course=schedule.course, term=schedule.term, time_profile=schedule.time_profile, is_active=True).order_by("code")
         offerings = models.SubjectOffering.objects.filter(group__in=groups, is_active=True).select_related("subject").prefetch_related("eligible_teachers", "requirements")
         sessions = schedule.sessions.select_related("requirement__offering__subject", "requirement__offering__group", "teacher", "room").order_by("weekday", "starts_at")
         return Response({
-            "id": schedule.pk, "revision": schedule.revision, "course": schedule.course.name, "term": schedule.term.name,
+            "id": schedule.pk, "revision": schedule.revision, "course": schedule.course.name, "term": schedule.term.name, "time_profile": schedule.time_profile_id, "time_profile_name": schedule.time_profile.name if schedule.time_profile_id else "Sem turno",
             "institution": schedule.course.institution.name,
-            "weekdays": list(models.TimeWindow.objects.filter(institution=schedule.course.institution, scope=models.Scope.COURSE, scope_id=schedule.course_id, is_active=True).values_list("weekday", flat=True).distinct().order_by("weekday")),
+            "profiles_active": bool(profile_structure["slots"]),
+            "profile_slots_in_sync": not current_profile_slots or configured_slots == current_profile_slots,
+            "weekdays": active_weekdays,
+            "available_slot_ids_by_day": allowed_slots,
             "groups": [{"id": group.pk, "code": group.code, "name": group.name} for group in groups],
             "offerings": [{"id": offer.pk, "group_id": offer.group_id, "subject": offer.subject.name,
                            "onsite_weekly_hours": offer.subject.onsite_weekly_hours,
                            "teachers": [{"id": teacher.pk, "name": teacher.name} for teacher in offer.eligible_teachers.all()],
                            "blocks": self._grid_blocks(offer)}
                           for offer in offerings],
-            "slots": [{"id": slot.pk, "start": slot.starts_at.strftime("%H:%M"), "end": slot.ends_at.strftime("%H:%M")} for slot in schedule.slots.all()],
+            "slots": [{"id": slot.pk, "start": slot.starts_at.strftime("%H:%M"), "end": slot.ends_at.strftime("%H:%M")} for slot in schedule_slots],
             "sessions": [{"id": item.pk, "group_id": item.requirement.offering.group_id, "weekday": item.weekday,
                           "start": item.starts_at.strftime("%H:%M"), "end": item.ends_at.strftime("%H:%M"),
                           "subject": item.requirement.offering.subject.name, "teacher": item.teacher.name, "room": item.room.code,
@@ -476,6 +586,7 @@ class ScheduleViewSet(AcademicViewSet):
                     count = 1
                 else:
                     entries = request.data.get("cells")
+                    is_batch = entries is not None
                     if entries is None:
                         entries = [request.data]
                     if not isinstance(entries, list) or not entries or len(entries) > 200:
@@ -484,12 +595,15 @@ class ScheduleViewSet(AcademicViewSet):
                         try:
                             save_cell(schedule, entry)
                         except GridConflict as conflict:
-                            conflict.index = index
+                            conflict.index = index if is_batch else None
                             raise
                     count = len(entries)
             except GridConflict as conflict:
                 transaction.set_rollback(True)
-                return Response({"code": "GRID_CONFLICT", "cell_index": conflict.index, "conflicts": conflict.conflicts}, status=status.HTTP_409_CONFLICT)
+                payload = {"code": "GRID_CONFLICT", "conflicts": conflict.conflicts}
+                if conflict.index is not None:
+                    payload["cell_index"] = conflict.index
+                return Response(payload, status=status.HTTP_409_CONFLICT)
             schedule.revision = F("revision") + 1
             schedule.save(update_fields=["revision", "updated_at"])
             schedule.refresh_from_db(fields=["revision"])
@@ -542,11 +656,11 @@ class ScheduleViewSet(AcademicViewSet):
         conflicts = []
         for session in schedule.sessions.select_related("requirement__offering__group__course", "requirement__offering__subject", "teacher", "room"):
             conflicts.extend(validate_session(session))
-        for requirement in models.SessionRequirement.objects.filter(offering__group__course=schedule.course, offering__group__term=schedule.term, offering__is_active=True):
+        for requirement in models.SessionRequirement.objects.filter(offering__group__course=schedule.course, offering__group__term=schedule.term, offering__group__time_profile=schedule.time_profile, offering__is_active=True):
             count = schedule.sessions.filter(requirement=requirement).count()
             if count != requirement.weekly_count:
                 conflicts.append({"code": "MISSING_SESSIONS", "severity": "HARD", "message": f"A oferta {requirement.offering} requer {requirement.weekly_count} encontro(s); há {count}.", "requirement_id": requirement.pk})
-        for offering in models.SubjectOffering.objects.filter(group__course=schedule.course, group__term=schedule.term, is_active=True):
+        for offering in models.SubjectOffering.objects.filter(group__course=schedule.course, group__term=schedule.term, group__time_profile=schedule.time_profile, is_active=True):
             total = sum(item.duration_minutes * item.weekly_count for item in offering.requirements.all())
             if total != offering.weekly_minutes:
                 conflicts.append({"code": "WORKLOAD_MISMATCH", "severity": "HARD", "message": f"A oferta {offering} prevê {offering.weekly_minutes} minutos, mas seus encontros somam {total}.", "offering_id": offering.pk})

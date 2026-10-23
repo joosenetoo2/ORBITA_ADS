@@ -78,6 +78,7 @@ class Subject(ActiveModel):
     credits = models.PositiveSmallIntegerField(null=True, blank=True, validators=[MinValueValidator(1)])
     onsite_weekly_hours = models.PositiveSmallIntegerField(null=True, blank=True)
     ead_weekly_hours = models.PositiveSmallIntegerField(default=0)
+    period_number = models.PositiveSmallIntegerField(null=True, blank=True, validators=[MinValueValidator(1)])
     required_features = models.ManyToManyField("RoomFeature", blank=True)
 
     class Meta:
@@ -93,6 +94,8 @@ class Subject(ActiveModel):
             raise ValidationError({"ead_weekly_hours": "A soma das horas presenciais e EAD semanais não pode exceder os créditos."})
         if self.workload_unit != self.Unit.CLASS_HOUR:
             raise ValidationError({"workload_unit": "A carga das disciplinas é sempre em hora-aula de 60 minutos."})
+        if self.pk and self.period_number and self.subjectoffering_set.exclude(group__period_number=self.period_number).exists():
+            raise ValidationError({"period_number": "Esta disciplina já possui oferta para turma de outro período."})
 
 
 class Curriculum(ActiveModel):
@@ -173,6 +176,8 @@ class ClassGroup(ActiveModel):
     code = models.CharField(max_length=50)
     name = models.CharField(max_length=120, blank=True)
     curriculum_period = models.ForeignKey(CurriculumPeriod, null=True, blank=True, on_delete=models.PROTECT)
+    period_number = models.PositiveSmallIntegerField(null=True, blank=True, validators=[MinValueValidator(1)])
+    time_profile = models.ForeignKey("TimeProfile", null=True, blank=True, on_delete=models.PROTECT)
     student_count = models.PositiveIntegerField(null=True, blank=True)
 
     class Meta:
@@ -187,6 +192,12 @@ class ClassGroup(ActiveModel):
             errors["term"] = "O período letivo pertence a outra instituição."
         if self.curriculum_period_id and self.course_id and self.curriculum_period.curriculum.course_id != self.course_id:
             errors["curriculum_period"] = "O período curricular pertence a outro curso."
+        if self.time_profile_id and self.course_id and self.time_profile.institution_id != self.course.institution_id:
+            errors["time_profile"] = "O turno pertence a outra instituição."
+        if self.pk and self.period_number and self.offerings.exclude(subject__period_number=self.period_number).exists():
+            errors["period_number"] = "A turma possui ofertas de outro período curricular."
+        if self.pk and ScheduledSession.objects.filter(requirement__offering__group_id=self.pk).exclude(schedule__time_profile_id=self.time_profile_id).exists():
+            errors["time_profile"] = "A turma possui aulas alocadas em outra grade. Remova essas aulas antes de trocar o turno."
         if errors:
             raise ValidationError(errors)
 
@@ -207,6 +218,8 @@ class SubjectOffering(ActiveModel):
     def clean(self):
         if self.group_id and self.subject_id and self.group.course.institution_id != self.subject.institution_id:
             raise ValidationError({"subject": "A disciplina pertence a outra instituição."})
+        if self.group_id and self.subject_id and self.group.period_number != self.subject.period_number:
+            raise ValidationError({"subject": "A disciplina pertence a outro período curricular."})
 
 
 class SessionRequirement(models.Model):
@@ -318,15 +331,18 @@ def validate_time_scope(instance):
 class Schedule(ActiveModel):
     course = models.ForeignKey(Course, on_delete=models.PROTECT)
     term = models.ForeignKey(AcademicTerm, on_delete=models.PROTECT)
+    time_profile = models.ForeignKey(TimeProfile, null=True, blank=True, on_delete=models.PROTECT)
     revision = models.PositiveIntegerField(default=1)
     published_version = models.PositiveIntegerField(null=True, blank=True)
 
     class Meta:
-        constraints = [models.UniqueConstraint(fields=["course", "term"], name="unique_schedule_course_term")]
+        constraints = [models.UniqueConstraint(fields=["course", "term", "time_profile"], name="unique_schedule_course_term_profile")]
 
     def clean(self):
         if self.course_id and self.term_id and self.course.institution_id != self.term.institution_id:
             raise ValidationError({"term": "O período letivo pertence a outra instituição."})
+        if self.time_profile_id and self.course_id and self.time_profile.institution_id != self.course.institution_id:
+            raise ValidationError({"time_profile": "O turno pertence a outra instituição."})
 
 
 class ScheduleSlot(models.Model):

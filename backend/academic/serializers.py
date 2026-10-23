@@ -63,6 +63,8 @@ AcademicTermSerializer = serializer_for(models.AcademicTerm)
 CourseSerializer = serializer_for(models.Course)
 class SubjectSerializer(CleanModelSerializer):
     def validate(self, attrs):
+        if self.instance is None and not attrs.get("period_number"):
+            raise serializers.ValidationError({"period_number": "Informe o período curricular da disciplina."})
         if "ead_percentage" in self.initial_data:
             raise serializers.ValidationError({"ead_weekly_hours": "Informe horas EAD semanais, não percentual."})
         if "credits" in attrs and attrs["credits"] is not None:
@@ -78,7 +80,17 @@ CurriculumPeriodSerializer = serializer_for(models.CurriculumPeriod)
 TeacherSerializer = serializer_for(models.Teacher)
 RoomFeatureSerializer = serializer_for(models.RoomFeature)
 RoomSerializer = serializer_for(models.Room)
-ClassGroupSerializer = serializer_for(models.ClassGroup)
+class ClassGroupSerializer(CleanModelSerializer):
+    def validate(self, attrs):
+        if self.instance is None:
+            for field, message in (("period_number", "Informe o período curricular da turma."), ("time_profile", "Escolha o turno da turma.")):
+                if not attrs.get(field):
+                    raise serializers.ValidationError({field: message})
+        return super().validate(attrs)
+
+    class Meta:
+        model = models.ClassGroup
+        fields = "__all__"
 SubjectOfferingSerializer = serializer_for(models.SubjectOffering)
 SessionRequirementSerializer = serializer_for(models.SessionRequirement)
 TimeProfileSerializer = serializer_for(models.TimeProfile)
@@ -87,10 +99,16 @@ TimeBlockSerializer = serializer_for(models.TimeBlock)
 class ScheduleSerializer(CleanModelSerializer):
     course_name = serializers.CharField(source="course.name", read_only=True)
     term_name = serializers.CharField(source="term.name", read_only=True)
+    time_profile_name = serializers.CharField(source="time_profile.name", read_only=True)
+
+    def validate(self, attrs):
+        if self.instance is None and not attrs.get("time_profile"):
+            raise serializers.ValidationError({"time_profile": "Escolha o turno da grade."})
+        return super().validate(attrs)
 
     class Meta:
         model = models.Schedule
-        fields = ["id", "course", "course_name", "term", "term_name", "revision", "published_version", "created_at", "updated_at"]
+        fields = ["id", "course", "course_name", "term", "term_name", "time_profile", "time_profile_name", "revision", "published_version", "created_at", "updated_at"]
         read_only_fields = ["revision", "published_version", "created_at", "updated_at"]
 ScheduledSessionSerializer = serializer_for(models.ScheduledSession)
 ScheduleVersionSerializer = serializer_for(models.ScheduleVersion, ["id", "schedule", "number", "created_at", "created_by"])

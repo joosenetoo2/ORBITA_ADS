@@ -107,7 +107,7 @@ def reconcile(requirement):
 
 def save_cell(schedule, data):
     try:
-        group = models.ClassGroup.objects.get(pk=data["group_id"], course=schedule.course, term=schedule.term)
+        group = models.ClassGroup.objects.get(pk=data["group_id"], course=schedule.course, term=schedule.term, time_profile=schedule.time_profile)
         weekday = int(data["weekday"])
         start_slot = models.ScheduleSlot.objects.get(pk=data["slot_id"], schedule=schedule)
         span = int(data.get("span", 1))

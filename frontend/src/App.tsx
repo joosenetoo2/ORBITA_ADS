@@ -123,6 +123,8 @@ const labels: Record<string, string> = {
   credits: 'Créditos',
   onsite_weekly_hours: 'Horas presenciais por semana',
   ead_weekly_hours: 'Horas EAD por semana',
+  period_number: 'Período curricular',
+  time_profile: 'Turno / perfil de horários',
   weekly_hours: 'Horas presenciais/semana',
   max_weekly_minutes: 'Limite semanal (minutos)',
   capacity: 'Capacidade',
@@ -179,6 +181,7 @@ const fieldsets: Record<Resource, Field[]> = {
     { key: 'institution', source: 'institutions', required: true },
     { key: 'code', required: true },
     { key: 'name', required: true },
+    { key: 'period_number', options: Array.from({ length: 10 }, (_, index) => [String(index + 1), `${index + 1}º período`]), required: true },
     { key: 'credits', type: 'number', required: true },
     { key: 'onsite_weekly_hours', type: 'number', required: true },
     { key: 'ead_weekly_hours', type: 'number', required: true }
@@ -198,6 +201,8 @@ const fieldsets: Record<Resource, Field[]> = {
   'class-groups': [
     { key: 'course', source: 'courses', required: true },
     { key: 'term', source: 'academic-terms', required: true },
+    { key: 'period_number', options: Array.from({ length: 10 }, (_, index) => [String(index + 1), `${index + 1}º período`]), required: true },
+    { key: 'time_profile', source: 'time-profiles', required: true },
     { key: 'code', required: true },
     { key: 'name', required: true }
   ],
@@ -280,11 +285,11 @@ function getResourceColumns(resource: Resource): string[] {
     : resource === 'courses'
     ? ['code', 'name', 'modality']
     : resource === 'subjects'
-    ? ['code', 'name', 'credits', 'total_workload', 'onsite_weekly_hours', 'ead_weekly_hours']
+    ? ['code', 'name', 'period_number', 'credits', 'total_workload', 'onsite_weekly_hours', 'ead_weekly_hours']
     : resource === 'teachers'
     ? ['code', 'name']
     : resource === 'class-groups'
-    ? ['code', 'name', 'course', 'term']
+    ? ['code', 'name', 'period_number', 'time_profile', 'course', 'term']
     : ['code', 'name'];
 }
 
@@ -293,6 +298,7 @@ function displayResourceValue(row: RecordItem, key: string, data: Data) {
   if (key === 'weekly_hours') return `${Number(row.weekly_minutes ?? 0) / 60} h`;
   if (key === 'total_workload') return `${String(row[key] ?? '—')} h`;
   if (key === 'ead_weekly_hours') return `${String(row[key] ?? 0)} h`;
+  if (key === 'period_number') return row[key] ? `${row[key]}º` : 'Definir';
   if (key === 'workload_unit') return row[key] === 'CLASS_HOUR' ? 'Hora-aula' : 'Hora-relógio';
   if (key === 'eligible_teachers' && Array.isArray(row[key])) {
     const teacherNames = (row[key] as number[]).map((id) => {
@@ -310,6 +316,7 @@ function displayResourceValue(row: RecordItem, key: string, data: Data) {
       term: 'academic-terms',
       institution: 'institutions',
       profile: 'time-profiles',
+      time_profile: 'time-profiles',
     } as Partial<Record<string, Resource>>
   )[key];
 
@@ -474,7 +481,7 @@ function Modal({
                 field.scopeSource && scopeResource
                   ? data[scopeResource].map((entry): [string, string] => [String(entry.id), displayName(entry)])
                   : field.source
-                  ? data[field.source].map((entry): [string, string] => [String(entry.id), displayName(entry)])
+                  ? data[field.source].filter((entry) => field.key !== 'time_profile' || (entry.is_active && (!values.course || Number(entry.institution) === Number(data.courses.find((course) => course.id === Number(values.course))?.institution)))).map((entry): [string, string] => [String(entry.id), displayName(entry)])
                   : field.options;
 
               return (
@@ -950,7 +957,7 @@ export default function App({
           )}
 
           {section === 'grid' ? (
-            <GridWorkspace key={gridRefresh} initialScheduleId={preferredScheduleId} onSetup={() => void loadData()} onOpenOffers={() => { setCatalogTab('subject-offerings'); navigate('catalog'); }} />
+            <GridWorkspace key={gridRefresh} initialScheduleId={preferredScheduleId} onSetup={() => void loadData()} onOpenOffers={() => { setCatalogTab('subject-offerings'); navigate('catalog'); }} onOpenTimeProfiles={() => navigate('time')} />
           ) : loading ? (
             <div className="loading-state">
               <RefreshCw size={30} className="spinning" style={{ color: 'var(--color-secondary)' }} />

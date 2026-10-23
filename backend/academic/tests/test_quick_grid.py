@@ -2,7 +2,7 @@ from django.contrib.auth import get_user_model
 from django.test import TestCase
 from rest_framework.test import APIClient
 
-from academic.models import ClassGroup, Institution, ScheduledSession, SessionRequirement, Subject, SubjectOffering, Teacher, Room
+from academic.models import ClassGroup, Institution, ScheduledSession, SessionRequirement, Subject, SubjectOffering, Teacher, Room, TimeProfile
 from academic.catalog_flow import offer_subject
 
 
@@ -11,10 +11,12 @@ class QuickGridTests(TestCase):
         user = get_user_model().objects.create_superuser("grid-admin", "grid@example.test", "test-password")
         self.client = APIClient()
         self.client.force_authenticate(user)
+        institution = Institution.objects.create(name="Faculdade")
+        profile = TimeProfile.objects.create(institution=institution, name="Noite")
         response = self.client.post("/api/v1/schedules/quick-setup/", {
             "institution": "Faculdade", "course_code": "ADS", "course_name": "Análise e Desenvolvimento de Sistemas",
             "term": "2027.1", "starts_on": "2027-01-01", "ends_on": "2027-06-30",
-            "groups": ["1º A", "1º C"], "weekdays": [1, 2, 3, 4, 5],
+            "groups": ["1º A", "1º C"], "time_profile_id": profile.pk, "weekdays": [1, 2, 3, 4, 5],
             "slots": [{"start": "17:50", "end": "18:50"}, {"start": "18:50", "end": "19:50"}, {"start": "19:50", "end": "20:50"}],
         }, format="json")
         self.assertEqual(response.status_code, 201, response.data)
@@ -23,7 +25,7 @@ class QuickGridTests(TestCase):
         self.cells_url = f"/api/v1/schedules/{self.schedule_id}/quick-cells/"
         self.grid = self.client.get(self.grid_url).data
         institution = Institution.objects.get()
-        subject = Subject.objects.create(institution=institution, code="POO", name="Programação OO", credits=2, onsite_weekly_hours=2, total_workload=40)
+        subject = Subject.objects.create(institution=institution, code="POO", name="Programação OO", credits=2, onsite_weekly_hours=2, total_workload=40, period_number=1)
         arthur = Teacher.objects.create(institution=institution, code="ARTHUR", name="Arthur Oliveira")
         beatriz = Teacher.objects.create(institution=institution, code="BIA", name="Beatriz")
         for group in ClassGroup.objects.all():
