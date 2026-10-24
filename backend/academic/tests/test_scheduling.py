@@ -88,3 +88,10 @@ class AllocationValidationTests(TestCase):
         self.assertIn("TEACHER_MIN_REST", {item["code"] for item in validate_session(monday)})
         self.assertIn("TEACHER_MIN_REST", {item["code"] for item in validate_session(sunday)})
 
+    def test_five_continuous_hours_require_intraday_break(self):
+        self.requirement.duration_minutes = 300
+        self.requirement.save(update_fields=["duration_minutes"])
+        TimeWindow.objects.create(institution=self.institution, weekday=1, starts_at=time(8), ends_at=time(13))
+        item = self.session(1, time(8), time(13))
+        self.assertIn("INTRADAY_BREAK", {issue["code"] for issue in validate_session(item)})
+

@@ -3,6 +3,7 @@
 Intervals are half-open: [start, end). No fixed shift or class duration is assumed.
 """
 from .models import ScheduledSession, Scope, TeacherEvent, TimeBlock, TimeWindow
+from .workload import audit_intervals
 
 
 def minutes(value):
@@ -11,6 +12,15 @@ def minutes(value):
 
 def overlaps(a_start, a_end, b_start, b_end):
     return a_start < b_end and b_start < a_end
+
+
+def intraday_break_issue(term_id, teacher_id, weekday, start, end, *, session_id=None, event_id=None):
+    intervals = [{"weekday": weekday, "start": start, "end": end}]
+    sessions = ScheduledSession.objects.filter(schedule__term_id=term_id, teacher_id=teacher_id, weekday=weekday).exclude(pk=session_id)
+    events = TeacherEvent.objects.filter(term_id=term_id, teacher_id=teacher_id, weekday=weekday, is_active=True).exclude(pk=event_id)
+    intervals.extend({"weekday": weekday, "start": item.starts_at, "end": item.ends_at} for item in sessions)
+    intervals.extend({"weekday": weekday, "start": item.starts_at, "end": item.ends_at} for item in events)
+    return next((issue for issue in audit_intervals(intervals) if issue["code"] == "INTRADAY_BREAK"), None)
 
 
 def matching_scopes(session):
@@ -111,6 +121,9 @@ def validate_session(session, other_sessions=None):
         gap = (24 * 60 + start - minutes(event.ends_at)) if event.weekday == previous_day else (24 * 60 + minutes(event.starts_at) - end)
         if gap < 11 * 60:
             add("TEACHER_MIN_REST", f"O professor precisa de 11 horas de descanso entre esta aula e {event.title}.", "teacher", session.teacher_id)
+    intraday = intraday_break_issue(term_id, session.teacher_id, session.weekday, session.starts_at, session.ends_at, session_id=session.pk)
+    if intraday:
+        add("INTRADAY_BREAK", intraday["message"], "teacher", session.teacher_id)
     if session.teacher.max_weekly_minutes is not None:
         weekly = end - start
         for other in ScheduledSession.objects.filter(schedule__term_id=term_id, teacher_id=session.teacher_id).exclude(pk=session.pk):
@@ -148,6 +161,9 @@ def validate_teacher_event(event):
         gap = (24 * 60 + start - minutes(other.ends_at)) if other.weekday == previous_day else (24 * 60 + minutes(other.starts_at) - end)
         if gap < 11 * 60:
             add("TEACHER_MIN_REST", f"O professor precisa de 11 horas de descanso entre este horário e {other.title}.")
+    intraday = intraday_break_issue(event.term_id, event.teacher_id, event.weekday, event.starts_at, event.ends_at, event_id=event.pk)
+    if intraday:
+        add("INTRADAY_BREAK", intraday["message"])
     return conflicts
 
 

@@ -18,6 +18,37 @@
   font-size: 13px;
 }
 
+.teacher-agenda-toolbar > div:first-child { display: flex; flex-direction: column; gap: 4px; }
+.teacher-agenda-toolbar strong { color: var(--color-text); font-size: 14px; }
+.teacher-agenda-viewbar { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.teacher-week .sheet-title-header { flex-wrap: wrap; gap: 8px; }
+.teacher-week .sheet-title-summary { display: flex; align-items: center; justify-content: flex-end; gap: 10px; flex-wrap: wrap; font-size: 12px; }
+.teacher-week-entry { min-height: 58px; height: 100%; padding: 8px 10px; display: flex; flex-direction: column; justify-content: center; align-items: center; gap: 3px; background: var(--color-primary); color: #fff; border-left: 5px solid var(--color-secondary); }
+.teacher-week-entry.is-event { background: var(--color-accent-light); color: var(--color-text); border-left-color: var(--color-accent); }
+.teacher-week-entry strong { font-size: 12px; line-height: 1.3; white-space: normal; overflow-wrap: anywhere; }
+.teacher-week-entry span, .teacher-week-entry small { font-size: 11px; line-height: 1.3; }
+.teacher-week-location { display: inline-flex; align-items: center; gap: 4px; }
+.teacher-week-actions { display: flex; justify-content: center; flex-wrap: wrap; gap: 4px; margin-top: 4px; }
+.teacher-week .sheet-table td { height: 58px; }
+.teacher-balance { border: 1px solid var(--color-border); border-radius: var(--radius-md); background: var(--color-surface); overflow: hidden; }
+.teacher-balance-head { padding: 18px 20px; border-bottom: 1px solid var(--color-border); }
+.teacher-balance-head h2 { margin: 0 0 4px; font-size: 18px; }
+.teacher-balance-head p { margin: 0; color: var(--color-text-muted); font-size: 13px; }
+.teacher-balance-kpis { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; padding: 14px 18px; background: var(--color-bg); }
+.teacher-balance-kpis > div { display: flex; flex-direction: column; gap: 4px; padding: 12px; border: 1px solid var(--color-border); border-radius: var(--radius-sm); background: var(--color-surface); }
+.teacher-balance-kpis span { color: var(--color-text-secondary); font-size: 12px; }
+.teacher-balance-kpis strong { color: var(--color-text); font-size: 20px; }
+.teacher-balance-scroll { overflow-x: auto; }
+.teacher-balance table { width: 100%; border-collapse: collapse; text-align: left; font-size: 13px; }
+.teacher-balance th, .teacher-balance td { padding: 11px 12px; border-bottom: 1px solid var(--color-border-subtle); white-space: nowrap; }
+.teacher-balance thead { background: var(--color-bg); color: var(--color-text-secondary); font-size: 11px; text-transform: uppercase; letter-spacing: .04em; }
+.teacher-balance tbody tr:last-child th, .teacher-balance tbody tr:last-child td { border-bottom: 0; }
+.teacher-balance-warning { color: #92400e; font-weight: 700; }
+.teacher-balance-issues summary { cursor: pointer; }
+.teacher-balance-issues ul { margin: 8px 0 0; padding-left: 18px; max-width: 330px; white-space: normal; line-height: 1.5; }
+.teacher-balance-ok { color: #166534; font-weight: 700; }
+.teacher-balance-note { margin: 0; padding: 13px 20px; border-top: 1px solid var(--color-border); color: var(--color-text-secondary); font-size: 12px; line-height: 1.5; }
+
 .teacher-agenda-toolbar-actions,
 .sheet-title-summary,
 .teacher-event-inline-actions {
@@ -104,11 +135,20 @@
 @media (max-width: 900px) {
   .teacher-agenda-toolbar { align-items: flex-start; flex-direction: column; }
   .sheet-title-summary { justify-content: flex-start; }
+  .teacher-agenda-viewbar { flex-wrap: wrap; }
 }
 
 @media (max-width: 600px) {
+  .teacher-balance-kpis { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .teacher-agenda-toolbar-actions { width: 100%; }
   .teacher-agenda-select { width: 100%; align-items: stretch; flex-direction: column; }
   .teacher-agenda-select select { max-width: none; width: 100%; }
   .teacher-agenda-toolbar-actions .button { width: 100%; justify-content: center; }
+  .teacher-balance-scroll { overflow: visible; }
+  .teacher-balance table, .teacher-balance tbody, .teacher-balance tr { display: block; width: 100%; }
+  .teacher-balance thead { display: none; }
+  .teacher-balance tr { padding: 10px 14px; border-bottom: 1px solid var(--color-border); }
+  .teacher-balance th, .teacher-balance td { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; padding: 6px 0; border: 0; white-space: normal; }
+  .teacher-balance th { font-size: 15px; }
+  .teacher-balance td::before { content: attr(data-label); color: var(--color-text-secondary); font-weight: 600; }
 }

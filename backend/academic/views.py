@@ -17,6 +17,7 @@ from .permissions import AcademicPermission
 from .scheduling import candidate_starts, validate_session, validate_teacher_event
 from .quick_grid import GridConflict, delete_cell, make_code, parse_time, reconcile, save_cell
 from .catalog_flow import offer_subject
+from .workload import teacher_summary
 
 
 class AcademicViewSet(viewsets.ModelViewSet):
@@ -365,19 +366,25 @@ class TeacherAgendaView(APIView):
         term = get_object_or_404(models.AcademicTerm, pk=request.query_params.get("term_id"))
         teachers = models.Teacher.objects.filter(institution=term.institution, is_active=True).order_by("name")
         lessons = models.ScheduledSession.objects.filter(schedule__term=term).select_related(
-            "teacher", "room", "requirement__offering__subject", "requirement__offering__group", "schedule__course"
+            "teacher", "room", "requirement__offering__subject", "requirement__offering__group", "schedule__course", "schedule__time_profile"
         )
         events = models.TeacherEvent.objects.filter(term=term, is_active=True).select_related("teacher")
         items = [{"id": session.pk, "kind": "LESSON", "teacher_id": session.teacher_id, "weekday": session.weekday,
                   "start": session.starts_at.strftime("%H:%M"), "end": session.ends_at.strftime("%H:%M"),
                   "title": session.requirement.offering.subject.name,
                   "detail": f"{session.requirement.offering.group.name or session.requirement.offering.group.code} · {session.schedule.course.code}",
-                  "location": session.room.name or session.room.code} for session in lessons]
+                  "location": session.room.name or session.room.code,
+                  "source": session.schedule.time_profile.name if session.schedule.time_profile_id else "Grade sem turno",
+                  "schedule_id": session.schedule_id} for session in lessons]
         items += [{"id": event.pk, "kind": "EVENT", "teacher_id": event.teacher_id, "weekday": event.weekday,
                    "start": event.starts_at.strftime("%H:%M"), "end": event.ends_at.strftime("%H:%M"),
-                   "title": event.title, "detail": event.notes, "location": event.location} for event in events]
+                   "title": event.title, "detail": event.notes, "location": event.location,
+                   "source": "Avulso", "schedule_id": None} for event in events]
+        summaries = [{"teacher_id": teacher.pk, **teacher_summary([item for item in items if item["teacher_id"] == teacher.pk])}
+                     for teacher in teachers]
         return Response({"term": term.name, "teachers": [{"id": teacher.pk, "name": teacher.name, "color": teacher.color} for teacher in teachers],
-                         "items": sorted(items, key=lambda item: (item["weekday"], item["start"], item["teacher_id"]))})
+                         "items": sorted(items, key=lambda item: (item["weekday"], item["start"], item["teacher_id"])),
+                         "summaries": summaries})
 
 
 class ScheduleViewSet(AcademicViewSet):

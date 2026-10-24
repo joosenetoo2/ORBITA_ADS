@@ -7,7 +7,7 @@ from rest_framework.test import APIClient
 from academic.models import (
     AcademicTerm, ClassGroup, Course, Institution, Room, Schedule,
     ScheduledSession, SessionRequirement, Subject, SubjectOffering,
-    Teacher, TeacherEvent, TimeWindow,
+    Teacher, TeacherEvent, TimeProfile, TimeWindow,
 )
 from academic.scheduling import validate_session
 
@@ -88,3 +88,51 @@ class TeacherEventTests(TestCase):
         removed = self.client.delete(f"/api/v1/teacher-events/{event_id}/")
         self.assertEqual(removed.status_code, 204)
         self.assertFalse(TeacherEvent.objects.filter(pk=event_id).exists())
+
+    def test_agenda_combines_schedules_and_reports_weekly_balance(self):
+        self.lesson(weekday=1, start=time(18), end=time(19))
+        morning = TimeProfile.objects.create(institution=self.term.institution, name="Manhã")
+        morning_schedule = Schedule.objects.create(course=self.schedule.course, term=self.term, time_profile=morning)
+        morning_group = ClassGroup.objects.create(course=self.schedule.course, term=self.term, code="1M", time_profile=morning)
+        offering = SubjectOffering.objects.create(group=morning_group, subject=self.requirement.offering.subject)
+        offering.eligible_teachers.add(self.teacher)
+        morning_requirement = SessionRequirement.objects.create(offering=offering, duration_minutes=120, weekly_count=1)
+        ScheduledSession.objects.create(schedule=morning_schedule, requirement=morning_requirement,
+                                        weekday=3, starts_at=time(8), ends_at=time(10), teacher=self.teacher, room=self.room)
+        event = self.client.post("/api/v1/teacher-events/", self.event(starts_at="14:00", ends_at="16:00"), format="json")
+        self.assertEqual(event.status_code, 201, event.data)
+        response = self.client.get(f"/api/v1/teacher-agenda/?term_id={self.term.pk}")
+        self.assertEqual(response.status_code, 200, response.data)
+        self.assertEqual({item["schedule_id"] for item in response.data["items"]}, {self.schedule.pk, morning_schedule.pk, None})
+        summary = response.data["summaries"][0]
+        self.assertEqual((summary["lesson_blocks"], summary["lesson_minutes"], summary["event_count"], summary["event_minutes"], summary["total_minutes"]), (2, 180, 1, 120, 300))
+        self.assertEqual(summary["issues"], [])
+
+    def test_intraday_break_thresholds_apply_to_teacher_events(self):
+        first = self.client.post("/api/v1/teacher-events/", self.event(weekday=3, starts_at="08:00", ends_at="12:00"), format="json")
+        self.assertEqual(first.status_code, 201, first.data)
+        no_break = self.client.post("/api/v1/teacher-events/", self.event(weekday=3, starts_at="12:00", ends_at="13:00"), format="json")
+        self.assertEqual(no_break.status_code, 409, no_break.data)
+        self.assertIn("INTRADAY_BREAK", {issue["code"] for issue in no_break.data["conflicts"]})
+        fifteen = self.client.post("/api/v1/teacher-events/", self.event(weekday=3, starts_at="12:15", ends_at="13:00"), format="json")
+        self.assertEqual(fifteen.status_code, 201, fifteen.data)
+        needs_hour = self.client.post("/api/v1/teacher-events/", self.event(weekday=3, starts_at="13:00", ends_at="14:30"), format="json")
+        self.assertEqual(needs_hour.status_code, 409, needs_hour.data)
+        self.assertIn("INTRADAY_BREAK", {issue["code"] for issue in needs_hour.data["conflicts"]})
+        one_hour = self.client.post("/api/v1/teacher-events/", self.event(weekday=3, starts_at="14:00", ends_at="16:00"), format="json")
+        self.assertEqual(one_hour.status_code, 201, one_hour.data)
+
+    def test_interday_rest_checks_lessons_in_different_grades(self):
+        self.lesson(weekday=1, start=time(20, 50), end=time(21, 50))
+        morning = TimeProfile.objects.create(institution=self.term.institution, name="Manhã")
+        morning_schedule = Schedule.objects.create(course=self.schedule.course, term=self.term, time_profile=morning)
+        group = ClassGroup.objects.create(course=self.schedule.course, term=self.term, code="1M", time_profile=morning)
+        offering = SubjectOffering.objects.create(group=group, subject=self.requirement.offering.subject)
+        offering.eligible_teachers.add(self.teacher)
+        requirement = SessionRequirement.objects.create(offering=offering, duration_minutes=60, weekly_count=1)
+        morning_lesson = ScheduledSession.objects.create(schedule=morning_schedule, requirement=requirement,
+                                                          weekday=2, starts_at=time(8), ends_at=time(9), teacher=self.teacher, room=self.room)
+        self.assertIn("TEACHER_MIN_REST", {issue["code"] for issue in validate_session(morning_lesson)})
+        morning_lesson.starts_at, morning_lesson.ends_at = time(8, 50), time(9, 50)
+        morning_lesson.save(update_fields=["starts_at", "ends_at"])
+        self.assertNotIn("TEACHER_MIN_REST", {issue["code"] for issue in validate_session(morning_lesson)})

@@ -20,7 +20,7 @@ import {
 } from 'lucide-react';
 import { api, listAll, type RecordItem } from './api';
 import { matchesSearch } from './textUtils';
-import TeacherAgenda, { type AgendaItem } from './TeacherAgenda';
+import TeacherAgenda from './TeacherAgenda';
 import './grid.css';
 
 type Group = { id: number; code: string; name: string };
@@ -705,11 +705,7 @@ export default function GridWorkspace({ onSetup, onOpenOffers, onOpenTimeProfile
     }
   }
 
-  function gridTable(
-    owner: Group | string,
-    events: AgendaItem[] = [],
-    eventActions?: { add: () => void; edit: (item: AgendaItem) => void; remove: (item: AgendaItem) => void }
-  ) {
+  function gridTable(owner: Group | string) {
     if (!grid) return null;
     const isGroup = typeof owner !== 'string';
     const ownerTitle = isGroup ? (owner.name || owner.code) : owner;
@@ -727,13 +723,9 @@ export default function GridWorkspace({ onSetup, onOpenOffers, onOpenTimeProfile
               {isGroup ? 'Turma' : 'Docente'}
             </span>
           </div>
-          <div className="sheet-title-summary">
-            <span className="text-muted" style={{ fontSize: '12px' }}>
-              {subjectCount} disciplina(s) · {ownerSessions.length} bloco(s) · {hours} aula(s) / {hours} h presenciais
-              {!isGroup && events.length > 0 ? ` · ${events.length} horário(s) avulso(s)` : ''}
-            </span>
-            {!isGroup && eventActions && <button type="button" className="button small" onClick={eventActions.add}><Plus size={14} />Horário avulso</button>}
-          </div>
+          <span className="text-muted" style={{ fontSize: '12px' }}>
+            {subjectCount} disciplina(s) · {ownerSessions.length} bloco(s) · {hours} aula(s) / {hours} h presenciais
+          </span>
         </div>
 
         <div className="sheet-scroll">
@@ -863,20 +855,6 @@ export default function GridWorkspace({ onSetup, onOpenOffers, onOpenTimeProfile
             </tbody>
           </table>
         </div>
-        {!isGroup && events.length > 0 && <div className="teacher-events-inline" aria-label={`Horários avulsos de ${ownerTitle}`}>
-          <span className="teacher-events-inline-label">Horários avulsos · somente do professor</span>
-          <div className="teacher-events-inline-list">
-            {events.map((item) => <div className="teacher-event-inline" key={item.id}>
-              <span className="teacher-event-inline-time">{days[item.weekday - 1]} · {item.start}–{item.end}</span>
-              <strong>{item.title}</strong>
-              {item.location && <span>{item.location}</span>}
-              <div className="teacher-event-inline-actions">
-                <button type="button" className="button small ghost" onClick={() => eventActions?.edit(item)}>Editar</button>
-                <button type="button" className="button small danger ghost" onClick={() => eventActions?.remove(item)}>Excluir</button>
-              </div>
-            </div>)}
-          </div>
-        </div>}
       </div>
     );
   }
@@ -1084,7 +1062,7 @@ export default function GridWorkspace({ onSetup, onOpenOffers, onOpenTimeProfile
             </div>
 
             {/* Teacher color legend bar */}
-            {grid.slots.length > 0 && teachers.length > 0 && (
+            {mode === 'groups' && grid.slots.length > 0 && teachers.length > 0 && (
               <div className="sheet-legend-bar">
                 <span className="legend-label">Cores dos professores:</span>
                 <div className="legend-pills">
@@ -1116,12 +1094,7 @@ export default function GridWorkspace({ onSetup, onOpenOffers, onOpenTimeProfile
 
           {/* Empty Slots check */}
           {mode === 'teachers' && currentSchedule?.term ? (
-            <TeacherAgenda
-              termId={Number(currentSchedule.term)}
-              searchTerm={searchTerm}
-              scheduledTeachers={teachers}
-              renderTeacher={(name, events, actions) => gridTable(name, events, actions)}
-            />
+            <TeacherAgenda termId={Number(currentSchedule.term)} searchTerm={searchTerm} />
           ) : !grid.slots.length ? (
             <section className="panel sheet-start">
               <div className="sheet-start-icon">
