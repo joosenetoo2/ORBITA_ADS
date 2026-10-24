@@ -20,6 +20,7 @@ import {
 } from 'lucide-react';
 import { api, listAll, type RecordItem } from './api';
 import { matchesSearch } from './textUtils';
+import TeacherAgenda from './TeacherAgenda';
 import './grid.css';
 
 type Group = { id: number; code: string; name: string };
@@ -402,12 +403,6 @@ export default function GridWorkspace({ onSetup, onOpenOffers, onOpenTimeProfile
     if (!searchTerm.trim()) return grid.groups;
     return grid.groups.filter((g) => matchesSearch(`${g.name} ${g.code}`, searchTerm));
   }, [grid, searchTerm]);
-
-  const visibleTeachers = useMemo(() => {
-    if (!teachers.length) return [];
-    if (!searchTerm.trim()) return teachers;
-    return teachers.filter((t) => matchesSearch(t, searchTerm));
-  }, [teachers, searchTerm]);
 
   // Keyboard escape listener for modals
   useEffect(() => {
@@ -1098,7 +1093,9 @@ export default function GridWorkspace({ onSetup, onOpenOffers, onOpenTimeProfile
           </div>
 
           {/* Empty Slots check */}
-          {!grid.slots.length ? (
+          {mode === 'teachers' && currentSchedule?.term ? (
+            <TeacherAgenda termId={Number(currentSchedule.term)} searchTerm={searchTerm} />
+          ) : !grid.slots.length ? (
             <section className="panel sheet-start">
               <div className="sheet-start-icon">
                 <Clock size={36} />
@@ -1111,18 +1108,12 @@ export default function GridWorkspace({ onSetup, onOpenOffers, onOpenTimeProfile
                 Configurar horários da grade
               </button>
             </section>
-          ) : mode === 'groups' ? (
+          ) : (
             visibleGroups.length ? (
               visibleGroups.map(gridTable)
             ) : (
               <p className="sheet-helper">Nenhuma turma corresponde ao filtro "{searchTerm}".</p>
             )
-          ) : visibleTeachers.length ? (
-            visibleTeachers.map(gridTable)
-          ) : (
-            <p className="sheet-helper">
-              {searchTerm ? `Nenhum docente corresponde ao filtro "${searchTerm}".` : 'Os horários dos professores aparecerão aqui após adicionar aulas.'}
-            </p>
           )}
         </>
       )}

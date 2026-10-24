@@ -6,7 +6,7 @@ for model in [
     models.Curriculum, models.CurriculumPeriod, models.CurriculumSubject,
     models.Teacher, models.RoomFeature, models.Room, models.ClassGroup,
     models.SubjectOffering, models.SessionRequirement, models.TimeProfile,
-    models.TimeWindow, models.TimeBlock, models.Schedule, models.ScheduledSession,
+    models.TimeWindow, models.TimeBlock, models.TeacherEvent, models.Schedule, models.ScheduledSession,
     models.ScheduleVersion, models.AuditEvent,
 ]:
     admin.site.register(model)

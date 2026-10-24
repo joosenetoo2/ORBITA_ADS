@@ -2,7 +2,7 @@
 
 Intervals are half-open: [start, end). No fixed shift or class duration is assumed.
 """
-from .models import ScheduledSession, Scope, TimeBlock, TimeWindow
+from .models import ScheduledSession, Scope, TeacherEvent, TimeBlock, TimeWindow
 
 
 def minutes(value):
@@ -92,6 +92,9 @@ def validate_session(session, other_sessions=None):
             add("ROOM_OVERLAP", "A sala já está ocupada neste intervalo.", "room", session.room_id, other.pk)
         if other.requirement.offering.group_id == group.id:
             add("GROUP_OVERLAP", "A turma já possui aula neste intervalo.", "group", group.id, other.pk)
+    for event in TeacherEvent.objects.filter(term_id=term_id, teacher_id=session.teacher_id, weekday=session.weekday, is_active=True):
+        if overlaps(start, end, minutes(event.starts_at), minutes(event.ends_at)):
+            add("TEACHER_EVENT_OVERLAP", f"O professor possui {event.title} neste intervalo.", "teacher", session.teacher_id)
     # Mínimo de 11 horas entre dias consecutivos, inclusive domingo → segunda.
     previous_day = (session.weekday - 2) % 7 + 1
     next_day = session.weekday % 7 + 1
@@ -104,12 +107,47 @@ def validate_session(session, other_sessions=None):
             gap = 24 * 60 + minutes(other.starts_at) - end
         if gap < 11 * 60:
             add("TEACHER_MIN_REST", "O professor precisa de pelo menos 11 horas entre aulas de dias consecutivos.", "teacher", session.teacher_id, other.pk)
+    for event in TeacherEvent.objects.filter(term_id=term_id, teacher_id=session.teacher_id, weekday__in=[previous_day, next_day], is_active=True):
+        gap = (24 * 60 + start - minutes(event.ends_at)) if event.weekday == previous_day else (24 * 60 + minutes(event.starts_at) - end)
+        if gap < 11 * 60:
+            add("TEACHER_MIN_REST", f"O professor precisa de 11 horas de descanso entre esta aula e {event.title}.", "teacher", session.teacher_id)
     if session.teacher.max_weekly_minutes is not None:
         weekly = end - start
         for other in ScheduledSession.objects.filter(schedule__term_id=term_id, teacher_id=session.teacher_id).exclude(pk=session.pk):
             weekly += minutes(other.ends_at) - minutes(other.starts_at)
         if weekly > session.teacher.max_weekly_minutes:
             add("TEACHER_WEEKLY_LIMIT", "A carga semanal máxima do professor foi excedida.", "teacher", session.teacher_id)
+    return conflicts
+
+
+def validate_teacher_event(event):
+    """Teacher-only commitments cannot overlap classes or each other in the term."""
+    if not event.is_active:
+        return []
+    start, end = minutes(event.starts_at), minutes(event.ends_at)
+    previous_day = (event.weekday - 2) % 7 + 1
+    next_day = event.weekday % 7 + 1
+    conflicts = []
+
+    def add(code, message):
+        conflicts.append({"code": code, "severity": "HARD", "message": message})
+
+    sessions = ScheduledSession.objects.filter(schedule__term_id=event.term_id, teacher_id=event.teacher_id)
+    for session in sessions.filter(weekday=event.weekday):
+        if overlaps(start, end, minutes(session.starts_at), minutes(session.ends_at)):
+            add("TEACHER_OVERLAP", "O professor já possui aula neste intervalo.")
+    for session in sessions.filter(weekday__in=[previous_day, next_day]):
+        gap = (24 * 60 + start - minutes(session.ends_at)) if session.weekday == previous_day else (24 * 60 + minutes(session.starts_at) - end)
+        if gap < 11 * 60:
+            add("TEACHER_MIN_REST", "O professor precisa de 11 horas de descanso entre este horário e uma aula.")
+    events = TeacherEvent.objects.filter(term_id=event.term_id, teacher_id=event.teacher_id, is_active=True).exclude(pk=event.pk)
+    for other in events.filter(weekday=event.weekday):
+        if overlaps(start, end, minutes(other.starts_at), minutes(other.ends_at)):
+            add("TEACHER_EVENT_OVERLAP", f"O professor já possui {other.title} neste intervalo.")
+    for other in events.filter(weekday__in=[previous_day, next_day]):
+        gap = (24 * 60 + start - minutes(other.ends_at)) if other.weekday == previous_day else (24 * 60 + minutes(other.starts_at) - end)
+        if gap < 11 * 60:
+            add("TEACHER_MIN_REST", f"O professor precisa de 11 horas de descanso entre este horário e {other.title}.")
     return conflicts
 
 

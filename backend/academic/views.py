@@ -14,7 +14,7 @@ from rest_framework.permissions import AllowAny
 
 from . import models, serializers
 from .permissions import AcademicPermission
-from .scheduling import candidate_starts, validate_session
+from .scheduling import candidate_starts, validate_session, validate_teacher_event
 from .quick_grid import GridConflict, delete_cell, make_code, parse_time, reconcile, save_cell
 from .catalog_flow import offer_subject
 
@@ -325,6 +325,59 @@ class TimeBlockViewSet(SafeTimeConfigurationMixin, AcademicViewSet):
     queryset = models.TimeBlock.objects.all().order_by("weekday", "starts_at")
     serializer_class = serializers.TimeBlockSerializer
     admin_only = True
+
+
+class TeacherEventViewSet(AcademicViewSet):
+    queryset = models.TeacherEvent.objects.select_related("teacher", "term").all().order_by("weekday", "starts_at", "pk")
+    serializer_class = serializers.TeacherEventSerializer
+
+    def get_queryset(self):
+        queryset = super().get_queryset()
+        if self.request.query_params.get("term_id"):
+            queryset = queryset.filter(term_id=self.request.query_params["term_id"])
+        if self.request.query_params.get("teacher_id"):
+            queryset = queryset.filter(teacher_id=self.request.query_params["teacher_id"])
+        return queryset
+
+    def create(self, request, *args, **kwargs):
+        return self._save_event(request)
+
+    def partial_update(self, request, *args, **kwargs):
+        return self._save_event(request, self.get_object())
+
+    def _save_event(self, request, instance=None):
+        serializer = self.get_serializer(instance, data=request.data, partial=instance is not None)
+        serializer.is_valid(raise_exception=True)
+        with transaction.atomic():
+            event = serializer.save()
+            conflicts = validate_teacher_event(event)
+            if conflicts:
+                transaction.set_rollback(True)
+                return Response({"valid": False, "conflicts": conflicts}, status=status.HTTP_409_CONFLICT)
+            models.AuditEvent.objects.create(actor=request.user, action="TEACHER_EVENT_CREATED" if instance is None else "TEACHER_EVENT_UPDATED", entity="TeacherEvent", entity_id=str(event.pk), metadata={"values": serializer.data})
+            return Response(serializer.data, status=status.HTTP_201_CREATED if instance is None else status.HTTP_200_OK)
+
+
+class TeacherAgendaView(APIView):
+    permission_classes = [AcademicPermission]
+
+    def get(self, request):
+        term = get_object_or_404(models.AcademicTerm, pk=request.query_params.get("term_id"))
+        teachers = models.Teacher.objects.filter(institution=term.institution, is_active=True).order_by("name")
+        lessons = models.ScheduledSession.objects.filter(schedule__term=term).select_related(
+            "teacher", "room", "requirement__offering__subject", "requirement__offering__group", "schedule__course"
+        )
+        events = models.TeacherEvent.objects.filter(term=term, is_active=True).select_related("teacher")
+        items = [{"id": session.pk, "kind": "LESSON", "teacher_id": session.teacher_id, "weekday": session.weekday,
+                  "start": session.starts_at.strftime("%H:%M"), "end": session.ends_at.strftime("%H:%M"),
+                  "title": session.requirement.offering.subject.name,
+                  "detail": f"{session.requirement.offering.group.name or session.requirement.offering.group.code} · {session.schedule.course.code}",
+                  "location": session.room.name or session.room.code} for session in lessons]
+        items += [{"id": event.pk, "kind": "EVENT", "teacher_id": event.teacher_id, "weekday": event.weekday,
+                   "start": event.starts_at.strftime("%H:%M"), "end": event.ends_at.strftime("%H:%M"),
+                   "title": event.title, "detail": event.notes, "location": event.location} for event in events]
+        return Response({"term": term.name, "teachers": [{"id": teacher.pk, "name": teacher.name, "color": teacher.color} for teacher in teachers],
+                         "items": sorted(items, key=lambda item: (item["weekday"], item["start"], item["teacher_id"]))})
 
 
 class ScheduleViewSet(AcademicViewSet):

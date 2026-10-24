@@ -50,6 +50,18 @@ class QuickGridTests(TestCase):
         self.assertEqual(Room.objects.count(), 1)
         self.assertEqual(SessionRequirement.objects.filter(offering__group_id=self.grid["groups"][0]["id"]).get().weekly_count, 1)
 
+    def test_teacher_event_blocks_a_class_cell(self):
+        term_id = self.client.get(f"/api/v1/schedules/{self.schedule_id}/").data["term"]
+        teacher = Teacher.objects.get(code="ARTHUR")
+        event = self.client.post("/api/v1/teacher-events/", {
+            "teacher": teacher.pk, "term": term_id, "title": "Orientação",
+            "weekday": 1, "starts_at": "18:00", "ends_at": "19:00",
+        }, format="json")
+        self.assertEqual(event.status_code, 201, event.data)
+        response = self.client.post(self.cells_url, self.cell(), format="json", HTTP_IF_MATCH="1")
+        self.assertEqual(response.status_code, 409, response.data)
+        self.assertEqual(ScheduledSession.objects.count(), 0)
+
     def test_batch_conflict_rolls_back_every_cell_and_autocreated_records(self):
         second = self.cell(group_id=self.grid["groups"][1]["id"], room="Lab A02")
         response = self.client.post(self.cells_url, {"cells": [self.cell(), second]}, format="json", HTTP_IF_MATCH="1")

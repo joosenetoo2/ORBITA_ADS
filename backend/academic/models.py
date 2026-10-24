@@ -305,6 +305,32 @@ class TimeBlock(ActiveModel):
         validate_time_scope(self)
 
 
+class TeacherEvent(ActiveModel):
+    """Recurring weekly commitment that belongs only to a teacher's agenda."""
+
+    teacher = models.ForeignKey(Teacher, on_delete=models.PROTECT, related_name="events")
+    term = models.ForeignKey(AcademicTerm, on_delete=models.PROTECT, related_name="teacher_events")
+    title = models.CharField(max_length=160)
+    weekday = models.PositiveSmallIntegerField(choices=Weekday.choices)
+    starts_at = models.TimeField()
+    ends_at = models.TimeField()
+    location = models.CharField(max_length=120, blank=True)
+    notes = models.TextField(blank=True)
+
+    class Meta:
+        ordering = ["weekday", "starts_at", "teacher_id"]
+        indexes = [models.Index(fields=["term", "teacher", "weekday"])]
+
+    def clean(self):
+        errors = {}
+        if self.teacher_id and self.term_id and self.teacher.institution_id != self.term.institution_id:
+            errors["term"] = "O período letivo pertence a outra instituição."
+        if self.starts_at and self.ends_at and self.starts_at >= self.ends_at:
+            errors["ends_at"] = "O fim deve ser posterior ao início."
+        if errors:
+            raise ValidationError(errors)
+
+
 def validate_time_scope(instance):
     if (instance.scope == Scope.INSTITUTION) != (instance.scope_id is None):
         raise ValidationError({"scope_id": "Informe o ID apenas para um escopo específico."})
