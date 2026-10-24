@@ -17,19 +17,24 @@
 .public-context h2 span{font-weight:500;color:#59718e}
 .public-context p{display:flex;align-items:center;gap:7px;margin:0;color:#59718e}
 .public-context-actions{display:flex;align-items:center;gap:16px;color:#63758f;font-size:13px}
-.public-days{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:15px;align-items:start}
-.public-day{background:#fff;border:1px solid #e3e8f0;border-radius:14px;overflow:hidden;min-height:140px}
-.public-day-head{padding:16px 18px;background:#eaf0f8;display:flex;justify-content:space-between;align-items:center}
-.public-day-head h3{margin:0;font-size:16px}
-.public-day-head span{font-size:12px;color:#5c6f8a}
-.public-lessons{padding:10px}
-.public-lesson{padding:14px 10px;border-bottom:1px solid #edf0f4;display:grid;grid-template-columns:1fr auto;gap:7px 10px}
+.public-calendar-scroll{max-width:100%;overflow-x:auto;border:1px solid #dce5f0;border-radius:14px;background:#fff;box-shadow:0 4px 20px #1e3a6108;scrollbar-color:#aebdd0 transparent}
+.public-calendar-scroll:focus-visible{outline:3px solid #7caeff;outline-offset:3px}
+.public-days{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));min-width:1000px;align-items:stretch}
+.public-day{min-width:0;min-height:270px;background:#fff;border-right:1px solid #e3e8f0}
+.public-day:last-child{border-right:0}
+.public-day-filtered{background:#f8fafc}
+.public-day-head{min-height:58px;padding:12px 14px;background:#eaf0f8;display:flex;justify-content:space-between;align-items:center;gap:8px;border-bottom:1px solid #dce5f0}
+.public-day-head h3{margin:0;font-size:15px}
+.public-day-head span{font-size:11px;color:#5c6f8a;white-space:nowrap}
+.public-lessons{padding:0 12px}
+.public-lesson{min-width:0;padding:14px 0;border-bottom:1px solid #edf0f4;display:flex;flex-direction:column;align-items:flex-start;gap:6px;overflow-wrap:anywhere}
 .public-lesson:last-child{border-bottom:0}
-.public-lesson-time{grid-column:1/-1;color:#35649b;font-weight:700;font-size:12px;display:flex;align-items:center;gap:5px}
-.public-lesson strong{font-size:14px}
-.public-lesson p{font-size:12px;color:#657894;margin:5px 0 0}
-.public-lesson-room{font-size:12px;color:#425573;background:#f1f5fa;padding:4px 8px;border-radius:6px;align-self:start;white-space:nowrap}
-.public-no-lessons,.public-loading{color:#72829a;padding:20px;font-size:14px}
+.public-lesson-time{color:#35649b;font-weight:700;font-size:12px;display:flex;align-items:center;gap:5px;white-space:nowrap}
+.public-lesson strong{font-size:13px;line-height:1.35;color:#172b4a}
+.public-lesson p{font-size:12px;line-height:1.45;color:#596f8a;margin:0}
+.public-lesson-room{font-size:11px;color:#425573;background:#f1f5fa;padding:4px 8px;border-radius:6px;max-width:100%}
+.public-no-lessons,.public-loading{color:#72829a;padding:20px 14px;font-size:13px;line-height:1.5}
+.public-weekend{margin-top:22px}.public-weekend>h3{font-size:15px;margin:0 0 10px}.public-weekend-days{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}.public-weekend-days .public-day{border:1px solid #e3e8f0;border-radius:12px;min-height:140px;overflow:hidden}
 .public-empty{text-align:center;padding:70px 20px;background:#fff;border:1px solid #e3e8f0;border-radius:16px;color:#63758f}
 .public-empty h2{color:#172b4a;margin-bottom:5px}
 @media(max-width:900px){.public-filters{grid-template-columns:repeat(2,minmax(0,1fr))}
@@ -41,11 +46,14 @@
 .public-filters{grid-template-columns:1fr}
 .public-header-note{font-size:11px}
 .public-context-actions{align-items:flex-start;flex-direction:column}
+.public-weekend-days{grid-template-columns:1fr}
 }
-@media print{.public-header,.public-filters,.public-context-actions button{display:none}
+@media print{@page{size:landscape;margin:10mm}.public-header,.public-filters,.public-context-actions button{display:none}
 .public-page{background:#fff}
 .public-main{max-width:none;padding:0}
-.public-days{grid-template-columns:repeat(2,1fr)}
-.public-day{break-inside:avoid}
+.public-calendar-scroll{overflow:visible;box-shadow:none}
+.public-days{min-width:0;grid-template-columns:repeat(5,minmax(0,1fr))}
+.public-day{min-height:0;break-inside:avoid}
+.public-lesson{padding:8px 0}
 }
 

@@ -8,6 +8,7 @@ type Group = { id: number; code: string; name: string; period_number: number | n
 type Session = { id: number; group_id: number; weekday: number; start: string; end: string; subject: string; teacher: string; room: string };
 type Timetable = Summary & { weekdays: number[]; groups: Group[]; sessions: Session[]; slots: { id: number; start: string; end: string }[] };
 const dayNames = ['', 'Segunda', 'Terça', 'Quarta', 'Quinta', 'Sexta', 'Sábado', 'Domingo'];
+const weekDays = [1, 2, 3, 4, 5];
 
 export default function PublicTimetable() {
   const [schedules, setSchedules] = useState<Summary[]>([]);
@@ -46,12 +47,26 @@ export default function PublicTimetable() {
   }) ?? [], [grid, period, groupId]);
   const teachers = useMemo(() => [...new Set(relevantSessions.map((session) => session.teacher))].sort((a, b) => a.localeCompare(b, 'pt-BR')), [relevantSessions]);
   const rooms = useMemo(() => [...new Set(relevantSessions.map((session) => session.room))].sort((a, b) => a.localeCompare(b, 'pt-BR')), [relevantSessions]);
-  const days = useMemo(() => (grid?.weekdays ?? []).filter((day) => !weekday || String(day) === weekday), [grid, weekday]);
+  const weekendDays = useMemo(() => [6, 7].filter((day) => grid?.weekdays.includes(day) || grid?.sessions.some((session) => session.weekday === day)), [grid]);
   const visibleSessions = useMemo(() => grid?.sessions.filter((session) => {
     const group = grid.groups.find((item) => item.id === session.group_id);
     return (!period || String(group?.period_number) === period) && (!groupId || String(session.group_id) === groupId) && (!weekday || String(session.weekday) === weekday) && (!teacher || session.teacher === teacher) && (!room || session.room === room);
   }) ?? [], [grid, period, groupId, weekday, teacher, room]);
   const groupName = (id: number) => grid?.groups.find((group) => group.id === id)?.name || grid?.groups.find((group) => group.id === id)?.code || `Turma #${id}`;
+  const renderDay = (day: number) => {
+    const lessons = visibleSessions.filter((session) => session.weekday === day)
+      .sort((a, b) => a.start.localeCompare(b.start) || groupName(a.group_id).localeCompare(groupName(b.group_id)));
+    const filteredOut = Boolean(weekday && Number(weekday) !== day);
+    return <section className={`public-day${filteredOut ? ' public-day-filtered' : ''}`} key={day} aria-label={`${dayNames[day]}: ${lessons.length} ${lessons.length === 1 ? 'aula' : 'aulas'}`}>
+      <div className="public-day-head"><h3>{dayNames[day]}</h3><span>{lessons.length} {lessons.length === 1 ? 'aula' : 'aulas'}</span></div>
+      {lessons.length ? <div className="public-lessons">{lessons.map((session) => <article className="public-lesson" key={session.id}>
+        <span className="public-lesson-time"><Clock3 size={15} />{session.start}–{session.end}</span>
+        <strong>{session.subject}</strong>
+        <p>{groupName(session.group_id)}<br />{session.teacher}</p>
+        {session.room && <span className="public-lesson-room">{session.room}</span>}
+      </article>)}</div> : <p className="public-no-lessons">{filteredOut ? 'Oculto pelo filtro de dia.' : 'Sem aulas com os filtros selecionados.'}</p>}
+    </section>;
+  };
 
   return <div className="public-page">
     <header className="public-header"><div className="public-brand"><span className="public-brand-mark"><School size={23} /></span><div><strong>ÓRBITA</strong><small>HORÁRIOS ACADÊMICOS</small></div></div><span className="public-header-note">Consulta pública</span></header>
@@ -62,12 +77,13 @@ export default function PublicTimetable() {
           <label>Grade<select value={scheduleId ?? ''} onChange={(event) => setScheduleId(Number(event.target.value))}>{schedules.map((item) => <option key={item.id} value={item.id}>{item.course} · {item.term} · {item.time_profile_name}</option>)}</select></label>
           <label>Período curricular<select value={period} onChange={(event) => { setPeriod(event.target.value); setGroupId(''); setTeacher(''); setRoom(''); }}><option value="">Todos</option>{periods.map((value) => <option key={value} value={value}>{value}º período</option>)}</select></label>
           <label>Turma<select value={groupId} onChange={(event) => { setGroupId(event.target.value); setTeacher(''); setRoom(''); }}><option value="">Todas</option>{groups.map((item) => <option key={item.id} value={item.id}>{item.name || item.code}</option>)}</select></label>
-          <label>Dia<select value={weekday} onChange={(event) => setWeekday(event.target.value)}><option value="">Semana completa</option>{grid?.weekdays.map((day) => <option key={day} value={day}>{dayNames[day]}</option>)}</select></label>
+          <label>Dia<select value={weekday} onChange={(event) => setWeekday(event.target.value)}><option value="">Semana completa</option>{[...weekDays, ...weekendDays].map((day) => <option key={day} value={day}>{dayNames[day]}</option>)}</select></label>
           <label>Professor<select value={teacher} onChange={(event) => setTeacher(event.target.value)}><option value="">Todos</option>{teachers.map((name) => <option key={name} value={name}>{name}</option>)}</select></label>
           <label>Sala<select value={room} onChange={(event) => setRoom(event.target.value)}><option value="">Todas</option>{rooms.map((name) => <option key={name} value={name}>{name}</option>)}</select></label>
         </section>
         {grid ? <><div className="public-context"><div><h2>{grid.course} <span>· {grid.time_profile_name}</span></h2><p><GraduationCap size={16} /> {grid.term} · {grid.institution}</p></div><div className="public-context-actions"><span>Versão {grid.version} · publicada em {new Date(grid.published_at).toLocaleDateString('pt-BR')}</span><button type="button" className="button" onClick={() => window.print()}><Printer size={16} />Imprimir</button></div></div>
-          <div className="public-days">{days.map((day) => { const lessons = visibleSessions.filter((session) => session.weekday === day).sort((a, b) => a.start.localeCompare(b.start) || groupName(a.group_id).localeCompare(groupName(b.group_id))); return <section className="public-day" key={day}><div className="public-day-head"><h3>{dayNames[day]}</h3><span>{lessons.length} {lessons.length === 1 ? 'aula' : 'aulas'}</span></div>{lessons.length ? <div className="public-lessons">{lessons.map((session) => <article className="public-lesson" key={session.id}><span className="public-lesson-time"><Clock3 size={15} />{session.start}–{session.end}</span><div><strong>{session.subject}</strong><p>{groupName(session.group_id)} · {session.teacher}</p></div><span className="public-lesson-room">{session.room}</span></article>)}</div> : <p className="public-no-lessons">Sem aulas com os filtros selecionados.</p>}</section>; })}</div>
+          <div className="public-calendar-scroll" tabIndex={0} role="region" aria-label="Grade semanal de segunda a sexta"><div className="public-days">{weekDays.map(renderDay)}</div></div>
+          {weekendDays.length > 0 && <section className="public-weekend"><h3>Fim de semana</h3><div className="public-weekend-days">{weekendDays.map(renderDay)}</div></section>}
         </> : <p className="public-loading">Carregando grade…</p>}
       </>}
     </main>
