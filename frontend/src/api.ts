@@ -1,7 +1,7 @@
 export type RecordItem = { id: number; [key: string]: unknown };
 export type Paged<T> = { count: number; next: string | null; results: T[] };
 
-export type Conflict = { code: string; message: string; conflicting_session_id?: number | null };
+export type Conflict = { code: string; message: string; conflicting_session_id?: number | null; offering_id?: number; group_code?: string; subject_name?: string; required_minutes?: number; allocated_minutes?: number };
 export class ApiError extends Error {
   constructor(message: string, public status: number, public details: unknown) { super(message); }
 }

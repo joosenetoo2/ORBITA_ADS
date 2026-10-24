@@ -740,14 +740,29 @@ class ScheduleViewSet(AcademicViewSet):
         conflicts = []
         for session in schedule.sessions.select_related("requirement__offering__group__course", "requirement__offering__subject", "teacher", "room"):
             conflicts.extend(validate_session(session))
-        for requirement in models.SessionRequirement.objects.filter(offering__group__course=schedule.course, offering__group__term=schedule.term, offering__group__time_profile=schedule.time_profile, offering__is_active=True):
-            count = schedule.sessions.filter(requirement=requirement).count()
-            if count != requirement.weekly_count:
-                conflicts.append({"code": "MISSING_SESSIONS", "severity": "HARD", "message": f"A oferta {requirement.offering} requer {requirement.weekly_count} encontro(s); há {count}.", "requirement_id": requirement.pk})
-        for offering in models.SubjectOffering.objects.filter(group__course=schedule.course, group__term=schedule.term, group__time_profile=schedule.time_profile, is_active=True):
-            total = sum(item.duration_minutes * item.weekly_count for item in offering.requirements.all())
-            if total != offering.weekly_minutes:
-                conflicts.append({"code": "WORKLOAD_MISMATCH", "severity": "HARD", "message": f"A oferta {offering} prevê {offering.weekly_minutes} minutos, mas seus encontros somam {total}.", "offering_id": offering.pk})
+        offerings = models.SubjectOffering.objects.filter(
+            group__course=schedule.course, group__term=schedule.term,
+            group__time_profile=schedule.time_profile, is_active=True,
+        ).select_related("group", "subject")
+        for offering in offerings:
+            required = (offering.subject.onsite_weekly_hours * 60
+                        if offering.subject.onsite_weekly_hours is not None else offering.weekly_minutes)
+            sessions = schedule.sessions.filter(requirement__offering=offering)
+            allocated = sum(
+                (session.ends_at.hour * 60 + session.ends_at.minute)
+                - (session.starts_at.hour * 60 + session.starts_at.minute)
+                for session in sessions
+            )
+            if allocated != required:
+                difference = abs(required - allocated)
+                action = "Faltam" if allocated < required else "Excedem"
+                conflicts.append({
+                    "code": "OFFERING_HOURS", "severity": "HARD",
+                    "message": f"{offering}: {action} {difference / 60:g} h presenciais ({allocated / 60:g} de {required / 60:g} h alocadas).",
+                    "offering_id": offering.pk, "group_code": offering.group.code,
+                    "subject_name": offering.subject.name, "required_minutes": required,
+                    "allocated_minutes": allocated,
+                })
         return Response({"valid": not conflicts, "conflicts": conflicts})
 
     @action(detail=True, methods=["get"])

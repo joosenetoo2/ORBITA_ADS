@@ -5,7 +5,6 @@ import {
   CalendarDays,
   CheckCircle2,
   CircleAlert,
-  ClipboardPaste,
   Clock,
   DoorOpen,
   GraduationCap,
@@ -18,7 +17,8 @@ import {
   Users,
   X
 } from 'lucide-react';
-import { api, listAll, type RecordItem } from './api';
+import { api, listAll, type Conflict, type RecordItem } from './api';
+import ValidationIssues from './ValidationIssues';
 import { matchesSearch } from './textUtils';
 import TeacherAgenda from './TeacherAgenda';
 import './grid.css';
@@ -242,6 +242,7 @@ export default function GridWorkspace({ onSetup, onOpenOffers, onOpenTimeProfile
   const [paste, setPaste] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
+  const [publicationIssues, setPublicationIssues] = useState<Conflict[]>([]);
   const [notice, setNotice] = useState('');
   const currentSchedule = schedules.find((item) => item.id === scheduleId);
 
@@ -288,6 +289,7 @@ export default function GridWorkspace({ onSetup, onOpenOffers, onOpenTimeProfile
 
   const loadGrid = useCallback(async (id: number) => {
     setGrid(await api<Grid>(`schedules/${id}/grid/`));
+    setPublicationIssues([]);
   }, []);
 
   useEffect(() => {
@@ -475,11 +477,26 @@ export default function GridWorkspace({ onSetup, onOpenOffers, onOpenTimeProfile
 
   async function setPublication(publish: boolean) {
     if (!grid) return;
-    setBusy(true); setError('');
+    setBusy(true); setError(''); setPublicationIssues([]);
     try {
       await api(`schedules/${grid.id}/${publish ? 'publish' : 'unpublish'}/`, { method: 'POST', headers: { 'If-Match': String(grid.revision) }, body: '{}' });
       await Promise.all([loadSchedules(), loadGrid(grid.id)]);
       setNotice(publish ? 'Grade publicada. Os alunos já podem consultar o horário no link público.' : 'Publicação retirada. Esta grade não aparece mais na consulta pública.');
+    } catch (reason) {
+      const details = (reason as { details?: { conflicts?: Conflict[] } }).details;
+      if (Array.isArray(details?.conflicts)) setPublicationIssues(details.conflicts);
+      else setError(errorText(reason));
+    }
+    finally { setBusy(false); }
+  }
+
+  async function checkPublication() {
+    if (!grid) return;
+    setBusy(true); setError(''); setPublicationIssues([]); setNotice('');
+    try {
+      const result = await api<{ valid: boolean; conflicts: Conflict[] }>(`schedules/${grid.id}/validate/`, { method: 'POST', body: '{}' });
+      setPublicationIssues(result.conflicts);
+      if (result.valid) setNotice('Grade validada: todas as horas presenciais foram alocadas e não há conflitos.');
     } catch (reason) { setError(errorText(reason)); }
     finally { setBusy(false); }
   }
@@ -901,6 +918,7 @@ export default function GridWorkspace({ onSetup, onOpenOffers, onOpenTimeProfile
           </button>
         </div>
       )}
+      {publicationIssues.length > 0 && <ValidationIssues conflicts={publicationIssues} title="Corrija estas pendências para publicar" />}
 
       {!grid ? (
         <section className="panel sheet-start">
@@ -985,6 +1003,7 @@ export default function GridWorkspace({ onSetup, onOpenOffers, onOpenTimeProfile
 
               {/* View Switcher & Action Tools */}
               <div className="sheet-tools">
+                <button type="button" className="button small" disabled={busy} onClick={() => void checkPublication()}>Verificar pendências</button>
                 {currentSchedule?.published_version ? <><a className="button small" href={`/horarios?grade=${grid.id}`} target="_blank" rel="noopener noreferrer">Ver horário público</a>{canPublish && <button type="button" className="button small ghost" disabled={busy} onClick={() => void setPublication(false)}>Retirar publicação</button>}</> : null}
                 {canPublish && <button type="button" className="button small primary" disabled={busy || !grid.sessions.length} onClick={() => void setPublication(true)}>{currentSchedule?.published_version ? 'Republicar alterações' : 'Publicar horário'}</button>}
                 <div className="sheet-toggle" role="group" aria-label="Modo de visualização da grade">
@@ -1022,21 +1041,6 @@ export default function GridWorkspace({ onSetup, onOpenOffers, onOpenTimeProfile
                   {grid.slots.length ? 'Faixas horárias' : 'Configurar horários'}
                 </button>
 
-                {grid.slots.length > 0 && (
-                  <button
-                    className="button small"
-                    onClick={() => {
-                      setPaste(true);
-                      setPasteGroup(grid.groups[0]?.id ?? 0);
-                      setPasteSlot(grid.slots[0]?.id ?? 0);
-                      setError('');
-                    }}
-                    title="Importar bloco de células colado da planilha"
-                  >
-                    <ClipboardPaste size={15} />
-                    Colar planilha
-                  </button>
-                )}
               </div>
             </div>
 
@@ -1061,35 +1065,6 @@ export default function GridWorkspace({ onSetup, onOpenOffers, onOpenTimeProfile
               </span>
             </div>
 
-            {/* Teacher color legend bar */}
-            {mode === 'groups' && grid.slots.length > 0 && teachers.length > 0 && (
-              <div className="sheet-legend-bar">
-                <span className="legend-label">Cores dos professores:</span>
-                <div className="legend-pills">
-                  {teachers.map((teacherName) => {
-                    const teacherObj = teachersList.find(
-                      (t) => String(t.name || '').trim().toLowerCase() === teacherName.trim().toLowerCase()
-                    );
-                    const palette = getTeacherPalette(teacherObj?.color as string | undefined, teacherName);
-                    return (
-                      <span
-                        key={teacherName}
-                        className="legend-pill"
-                        style={{
-                          backgroundColor: palette.bg,
-                          borderLeft: `4px solid ${palette.border}`,
-                          color: palette.text
-                        }}
-                        title={`Professor(a): ${teacherName}`}
-                      >
-                        <User size={12} style={{ opacity: 0.85 }} />
-                        <span>{teacherName}</span>
-                      </span>
-                    );
-                  })}
-                </div>
-              </div>
-            )}
           </div>
 
           {/* Empty Slots check */}
@@ -1378,7 +1353,11 @@ export default function GridWorkspace({ onSetup, onOpenOffers, onOpenTimeProfile
                     required
                     autoFocus
                     value={editor.subject}
-                    onChange={(event) => setEditor({ ...editor, subject: event.target.value, teacher: '' })}
+                    onChange={(event) => {
+                      const subject = event.target.value;
+                      const offering = cellOfferings.find((item) => item.subject === subject);
+                      setEditor({ ...editor, subject, teacher: offering?.teachers[0]?.name ?? '' });
+                    }}
                   >
                     <option value="">Selecione uma disciplina ofertada…</option>
                     {availableOfferings.map((item) => {

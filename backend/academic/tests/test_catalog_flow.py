@@ -48,14 +48,23 @@ class CatalogFlowTests(TestCase):
             "offering": offering.pk, "duration_minutes": 60, "weekly_count": 1,
         }, format="json")
         self.assertEqual(extra_requirement.status_code, 400, extra_requirement.data)
+        before = self.client.post(f"/api/v1/schedules/{setup.data['id']}/validate/", {}, format="json")
+        self.assertEqual(len(before.data["conflicts"]), 1, before.data)
+        self.assertEqual(before.data["conflicts"][0]["required_minutes"], 180)
+        self.assertEqual(before.data["conflicts"][0]["allocated_minutes"], 0)
         grid = self.client.get(f"/api/v1/schedules/{setup.data['id']}/grid/").data
         path = f"/api/v1/schedules/{setup.data['id']}/quick-cells/"
         first = self.client.post(path, {"group_id": group.pk, "weekday": 1, "slot_id": grid["slots"][0]["id"], "span": 2,
                                         "subject": "Programação OO", "teacher": "Ana", "room": "H01"}, format="json", HTTP_IF_MATCH="1")
         self.assertEqual(first.status_code, 200, first.data)
+        partial = self.client.post(f"/api/v1/schedules/{setup.data['id']}/validate/", {}, format="json")
+        self.assertEqual(len(partial.data["conflicts"]), 1, partial.data)
+        self.assertEqual(partial.data["conflicts"][0]["allocated_minutes"], 120)
         second = self.client.post(path, {"group_id": group.pk, "weekday": 2, "slot_id": grid["slots"][2]["id"], "span": 1,
                                          "subject": "Programação OO", "teacher": "Ana", "room": "H01"}, format="json", HTTP_IF_MATCH="2")
         self.assertEqual(second.status_code, 200, second.data)
+        offering.refresh_from_db()
+        self.assertEqual(offering.weekly_minutes, 180)
         ead_hour = self.client.post(path, {"group_id": group.pk, "weekday": 3, "slot_id": grid["slots"][0]["id"], "span": 1,
                                            "subject": "Programação OO", "teacher": "Ana", "room": "H01"}, format="json", HTTP_IF_MATCH="3")
         self.assertEqual(ead_hour.status_code, 400, ead_hour.data)

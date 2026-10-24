@@ -102,7 +102,6 @@ def reconcile(requirement):
     if not requirement:
         return
     sessions = list(models.ScheduledSession.objects.filter(requirement=requirement).order_by("occurrence", "pk"))
-    offering = requirement.offering
     if sessions:
         for index, session in enumerate(sessions, 1):
             if session.occurrence != index:
@@ -112,8 +111,6 @@ def reconcile(requirement):
         requirement.save(update_fields=["weekly_count"])
     else:
         requirement.delete()
-    offering.weekly_minutes = sum(item.duration_minutes * item.weekly_count for item in offering.requirements.all())
-    offering.save(update_fields=["weekly_minutes", "updated_at"])
 
 
 def save_cell(schedule, data):

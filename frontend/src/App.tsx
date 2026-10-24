@@ -838,6 +838,7 @@ export default function App({
   // Tabbed catalog state
   const [catalogTab, setCatalogTab] = useState<Resource>('subjects');
   const [catalogSearch, setCatalogSearch] = useState('');
+  const [offeringPeriod, setOfferingPeriod] = useState<number | null>(null);
 
   const loadData = useCallback(async (quiet = false) => {
     if (!quiet) setLoading(true);
@@ -943,12 +944,13 @@ export default function App({
   const activeResource: Resource = catalogTab;
 
   const activeRows = data[activeResource] ?? [];
+  const offeringPeriods = [...new Set(data['class-groups'].map((row) => Number(row.period_number)).filter((value) => value > 0))].sort((a, b) => a - b);
   const filteredRows = useMemo(() => {
-    if (!catalogSearch.trim()) return activeRows;
     return activeRows.filter((row) =>
-      Object.values(row).some((val) => matchesSearch(val, catalogSearch))
+      (activeResource !== 'subject-offerings' || offeringPeriod === null || Number(data['class-groups'].find((group) => group.id === Number(row.group))?.period_number) === offeringPeriod)
+      && (!catalogSearch.trim() || Object.values(row).some((val) => matchesSearch(val, catalogSearch)))
     );
-  }, [activeRows, catalogSearch]);
+  }, [activeRows, activeResource, catalogSearch, data, offeringPeriod]);
 
   return (
     <div className="app-shell">
@@ -1295,7 +1297,9 @@ export default function App({
 
                     {catalogTab === 'subject-offerings' && <div className="catalog-hint-banner">Cada turma recebe uma única oferta por disciplina. As horas presenciais semanais são definidas na disciplina; os blocos da grade são preparados na primeira oferta.</div>}
 
-                    {catalogTab === 'subject-offerings' && <OfferPlanner data={data} onSaved={async (message) => { setNotice(message); await loadData(true); }} onOpenGrid={(id) => { setPreferredScheduleId(id); setGridRefresh((value) => value + 1); navigate('grid'); }} />}
+                    {catalogTab === 'subject-offerings' && <div className="offering-period-filter" role="group" aria-label="Filtrar ofertas por período curricular"><span>Período</span><button type="button" className={offeringPeriod === null ? 'active' : ''} aria-pressed={offeringPeriod === null} onClick={() => setOfferingPeriod(null)}>Todos</button>{offeringPeriods.map((period) => <button type="button" key={period} className={offeringPeriod === period ? 'active' : ''} aria-pressed={offeringPeriod === period} onClick={() => setOfferingPeriod(period)}>{period}º</button>)}</div>}
+
+                    {catalogTab === 'subject-offerings' && <OfferPlanner data={data} periodFilter={offeringPeriod} onSaved={async (message) => { setNotice(message); await loadData(true); }} onOpenGrid={(id) => { setPreferredScheduleId(id); setGridRefresh((value) => value + 1); navigate('grid'); }} />}
 
                     {/* Table View */}
                     <div className="table-wrap catalog-table-wrap">

@@ -50,6 +50,19 @@ class QuickGridTests(TestCase):
         self.assertEqual(Room.objects.count(), 1)
         self.assertEqual(SessionRequirement.objects.filter(offering__group_id=self.grid["groups"][0]["id"]).get().weekly_count, 1)
 
+    def test_split_blocks_complete_offering_without_duplicate_missing_meetings(self):
+        group_id = self.grid["groups"][0]["id"]
+        first = self.client.post(self.cells_url, self.cell(span=1), format="json", HTTP_IF_MATCH="1")
+        self.assertEqual(first.status_code, 200, first.data)
+        second = self.client.post(self.cells_url, self.cell(span=1, weekday=2), format="json", HTTP_IF_MATCH="2")
+        self.assertEqual(second.status_code, 200, second.data)
+
+        validated = self.client.post(f"/api/v1/schedules/{self.schedule_id}/validate/", {}, format="json")
+        self.assertFalse(validated.data["valid"])
+        self.assertEqual(len(validated.data["conflicts"]), 1, validated.data)
+        self.assertNotEqual(validated.data["conflicts"][0]["group_code"], self.grid["groups"][0]["code"])
+        self.assertEqual(SubjectOffering.objects.get(group_id=group_id).weekly_minutes, 120)
+
     def test_teacher_event_blocks_a_class_cell(self):
         term_id = self.client.get(f"/api/v1/schedules/{self.schedule_id}/").data["term"]
         teacher = Teacher.objects.get(code="ARTHUR")
