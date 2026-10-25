@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState, type FormEvent } from 'react
 import {
   BookOpen,
   Calendar,
+  CalendarClock,
   CalendarDays,
   Check,
   CheckCircle2,
@@ -27,12 +28,13 @@ import {
 import { api, create, listAll, remove, update, type RecordItem } from './api';
 import ScheduleEditor from './ScheduleEditor';
 import GridWorkspace from './GridWorkspace';
+import TeacherAvailability from './TeacherAvailability';
 import OfferPlanner from './OfferPlanner';
 import type { AuthUser } from './AuthGate';
 import { matchesSearch } from './textUtils';
 import { ImportModal, OfferModal, type ImportKind } from './CatalogActions';
 
-type Section = 'grid' | 'overview' | 'catalog' | 'import' | 'time' | 'schedules';
+type Section = 'grid' | 'overview' | 'catalog' | 'import' | 'time' | 'availability' | 'schedules';
 type Resource =
   | 'institutions'
   | 'academic-terms'
@@ -829,6 +831,7 @@ export default function App({
   const [modalTarget, setModalTarget] = useState<{ resource: Resource; item: RecordItem | null; defaults?: Record<string, string> } | null>(null);
   const [mobileNav, setMobileNav] = useState(false);
   const [gridRefresh, setGridRefresh] = useState(0);
+  const [availabilityRefresh, setAvailabilityRefresh] = useState(0);
   const [settingShifts, setSettingShifts] = useState(false);
   const [preferredScheduleId, setPreferredScheduleId] = useState<number | null>(null);
   const [offerTarget, setOfferTarget] = useState<{ subjectId?: number; teacherId?: number; groupId?: number } | null>(null);
@@ -899,6 +902,7 @@ export default function App({
       { id: 'import' as Section, title: 'Importar em lote', icon: FileUp },
       { id: 'overview' as Section, title: 'Visão geral', icon: LayoutDashboard },
       { id: 'time' as Section, title: 'Regras de horário', icon: Clock3 },
+      { id: 'availability' as Section, title: 'Disponibilidade docente', icon: CalendarClock },
       { id: 'schedules' as Section, title: 'Editor detalhado', icon: Settings2 },
     ],
     []
@@ -1034,6 +1038,7 @@ export default function App({
               className={`icon-button ${loading ? 'spinning' : ''}`}
               onClick={() => {
                 if (section === 'grid') setGridRefresh((v) => v + 1);
+                else if (section === 'availability') setAvailabilityRefresh((v) => v + 1);
                 else void loadData();
               }}
               aria-label="Atualizar dados"
@@ -1084,7 +1089,7 @@ export default function App({
           )}
 
           {section === 'grid' ? (
-            <GridWorkspace key={gridRefresh} initialScheduleId={preferredScheduleId} canPublish={user.is_superuser || user.groups.includes('Administrador') || user.groups.includes('Coordenador')} onSetup={() => void loadData()} onOpenOffers={() => { setCatalogTab('subject-offerings'); navigate('catalog'); }} onOpenTimeProfiles={() => navigate('time')} />
+            <GridWorkspace key={gridRefresh} initialScheduleId={preferredScheduleId} canPublish={user.is_superuser || user.groups.includes('Administrador') || user.groups.includes('Coordenador')} onSetup={() => void loadData()} onOpenOffers={() => { setCatalogTab('subject-offerings'); navigate('catalog'); }} onOpenTimeProfiles={() => navigate('time')} onOpenAvailability={() => navigate('availability')} />
           ) : loading ? (
             <div className="loading-state">
               <RefreshCw size={30} className="spinning" style={{ color: 'var(--color-secondary)' }} />
@@ -1467,6 +1472,7 @@ export default function App({
                 </>
               )}
 
+              {section === 'availability' && <TeacherAvailability refreshToken={availabilityRefresh} teachers={data.teachers} terms={data['academic-terms']} canEdit={user.is_superuser || user.groups.includes('Administrador') || user.groups.includes('Coordenador')} />}
               {section === 'schedules' && <ScheduleEditor data={data} />}
             </>
           )}

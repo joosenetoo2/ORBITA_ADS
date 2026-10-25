@@ -1,6 +1,16 @@
 # Órbita Acadêmico
 
-Aplicação web baseada na [spec do MVP](orbita_academico_sdd_mvp_v1_1.md), com backend Django REST e interface React/TypeScript. A grade pode ser montada manualmente, validada e publicada em uma consulta pública. A geração automática CP-SAT ainda está pendente.
+Aplicação web baseada na [spec do MVP](orbita_academico_sdd_mvp_v1_1.md), com backend Django REST e interface React/TypeScript. A grade pode ser montada manualmente, receber propostas de geração automática, ser validada e publicada em uma consulta pública.
+
+## Disponibilidade docente
+
+Em **Disponibilidade docente**, selecione o período letivo e o professor. Cadastre uma faixa para vários dias de uma vez:
+
+- **Pode lecionar:** quando existir ao menos uma faixa desse tipo para o professor no período, cada aula deve caber integralmente em uma delas. Sem faixas desse tipo, valem as janelas gerais da grade.
+- **Indisponível:** bloqueia aulas que cruzem a faixa, mesmo dentro de uma faixa permitida.
+- **Preferido:** orienta a geração automática, sem bloquear uma alocação manual fora da faixa.
+
+As regras são semanais e valem para as grades da manhã e da noite do mesmo período letivo. Horários administrativos avulsos continuam sendo cadastrados na visão **Por professor**. Criar, editar ou excluir uma regra rígida que invalidaria aulas já alocadas é recusado com a lista de aulas afetadas. A geração automática usa as mesmas restrições e prioriza as faixas preferidas.
 
 ## Uso da grade
 
@@ -45,7 +55,9 @@ Para uma avaliação local no Windows sem PostgreSQL, execute `backend/run-local
 
 Os endpoints de dados começam em `/api/v1/` e exigem sessão autenticada, exceto `/api/v1/public/schedules/` e `/api/v1/public/schedules/{id}/`, que retornam apenas versões publicadas. `/api/v1/auth/session/`, `/api/v1/auth/login/` e `/api/v1/auth/logout/` cuidam da entrada e saída; login e saída exigem token CSRF. Grupos Django reconhecidos: `Administrador`, `Coordenador` e `Colaborador acadêmico`; superusuários possuem acesso de escrita. Crie os grupos pelo Admin antes de atribuir usuários. Configurações de instituição e janelas exigem `Administrador`. A publicação e a retirada exigem `Administrador` ou `Coordenador`.
 
-Recursos iniciais: instituição, períodos, cursos, disciplinas, matrizes, professores, salas, turmas, ofertas, requisitos internos de encontros, perfis/janelas/bloqueios e grades. A importação em lote usa `POST /api/v1/batch-import/` e é transacional. A ação `POST /api/v1/subjects/{id}/offer/` cria ou atualiza uma oferta individual. `POST /api/v1/subject-offerings/bulk-assign/` recebe `group_id` e `items` com `subject_id`, `teacher_id` e `block_hours`; a operação inteira é transacional. `POST /api/v1/schedules/from-offerings/` cria ou abre a grade do curso, período letivo e turno de uma turma com oferta. Em `/api/v1/schedules/{id}/sessions/`, a escrita exige `If-Match` com a revisão atual da grade; a resposta inclui `session` e a nova `revision`. `POST /api/v1/schedules/{id}/sessions/preview/` verifica uma alocação sem salvá-la. A validação verifica duração, janelas, bloqueios, elegibilidade, capacidade, recursos e conflitos de professor/sala/turma no mesmo período letivo. Use `/api/v1/schedules/{id}/validate/` para avaliar o rascunho; `POST /api/v1/schedules/{id}/publish/` para publicar e `POST /api/v1/schedules/{id}/unpublish/` para retirar a publicação. Alterações em perfis, janelas e bloqueios que invalidariam alocações existentes são recusadas com os IDs afetados.
+Recursos iniciais: instituição, períodos, cursos, disciplinas, matrizes, professores, salas, turmas, ofertas, requisitos internos de encontros, perfis/janelas/bloqueios e grades. A importação em lote usa `POST /api/v1/batch-import/` e é transacional. A ação `POST /api/v1/subjects/{id}/offer/` cria ou atualiza uma oferta individual. `POST /api/v1/subject-offerings/bulk-assign/` recebe `group_id` e `items` com `subject_id`, `teacher_id` e `block_hours`; a operação inteira é transacional. `POST /api/v1/schedules/from-offerings/` cria ou abre a grade do curso, período letivo e turno de uma turma com oferta. Em `/api/v1/schedules/{id}/sessions/`, a escrita exige `If-Match` com a revisão atual da grade; a resposta inclui `session` e a nova `revision`. `POST /api/v1/schedules/{id}/sessions/preview/` verifica uma alocação sem salvá-la. A validação verifica duração, janelas, bloqueios, elegibilidade, recursos, disponibilidade docente e conflitos de professor/sala/turma no mesmo período letivo. Use `/api/v1/schedules/{id}/validate/` para avaliar o rascunho; `POST /api/v1/schedules/{id}/publish/` para publicar e `POST /api/v1/schedules/{id}/unpublish/` para retirar a publicação. Alterações em perfis, janelas, bloqueios e disponibilidade docente que invalidariam alocações existentes são recusadas com os IDs afetados.
+
+`GET /api/v1/teacher-availability/?term_id=...&teacher_id=...` lista as regras semanais. `POST /api/v1/teacher-availability/` aceita `weekdays` para criar a mesma faixa em vários dias; `PATCH` e `DELETE` atuam em uma faixa. Somente coordenadores e administradores podem alterar essas regras.
 
 Na interface principal, o bloco pode ser aberto para edição ou arrastado para uma célula livre da mesma turma. A gravação do arraste é validada pela API e revertida quando houver conflito. O editor detalhado legado continua disponível para ajustes avançados.
 
@@ -58,5 +70,5 @@ Na interface principal, o bloco pode ser aberto para edição ou arrastado para 
 
 1. Versionar a migração inicial e validar os testes do backend em Python/PostgreSQL.
 2. Completar disponibilidade contextual e a prévia de conflitos no editor.
-3. Implementar o solver OR-Tools e seu validador independente antes de permitir aplicação de propostas.
+3. Executar a busca OR-Tools em um worker para grades grandes e aprofundar os diagnósticos de inviabilidade.
 4. Completar comparação entre versões publicadas, exportação PDF/XLSX e verificação de acessibilidade.

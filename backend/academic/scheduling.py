@@ -2,7 +2,7 @@
 
 Intervals are half-open: [start, end). No fixed shift or class duration is assumed.
 """
-from .models import ScheduledSession, Scope, TeacherEvent, TimeBlock, TimeWindow
+from .models import ScheduledSession, Scope, TeacherAvailability, TeacherEvent, TimeBlock, TimeWindow
 from .workload import audit_intervals
 
 
@@ -12,6 +12,38 @@ def minutes(value):
 
 def overlaps(a_start, a_end, b_start, b_end):
     return a_start < b_end and b_start < a_end
+
+
+def availability_issue(teacher_id, term_id, weekday, start, end, rules=None):
+    """An empty set of AVAILABLE rules means unrestricted teaching hours."""
+    if rules is None:
+        rules = TeacherAvailability.objects.filter(teacher_id=teacher_id, term_id=term_id, is_active=True)
+    rules = list(rules)
+    start = start if isinstance(start, int) else minutes(start)
+    end = end if isinstance(end, int) else minutes(end)
+    daily = [rule for rule in rules if rule.weekday == weekday]
+    if any(rule.kind == TeacherAvailability.Kind.UNAVAILABLE and
+           overlaps(start, end, minutes(rule.starts_at), minutes(rule.ends_at)) for rule in daily):
+        return {"code": "TEACHER_UNAVAILABLE", "message": "O professor está indisponível neste horário."}
+    if any(rule.kind == TeacherAvailability.Kind.AVAILABLE for rule in rules) and not any(
+        rule.kind == TeacherAvailability.Kind.AVAILABLE and
+        minutes(rule.starts_at) <= start and end <= minutes(rule.ends_at) for rule in daily
+    ):
+        return {"code": "OUTSIDE_TEACHER_AVAILABILITY", "message": "A aula está fora dos horários permitidos para o professor neste período letivo."}
+    return None
+
+
+def preferred_minutes(weekday, start, end, rules):
+    spans = sorted((max(start, minutes(rule.starts_at)), min(end, minutes(rule.ends_at)))
+                   for rule in rules if rule.weekday == weekday and rule.kind == TeacherAvailability.Kind.PREFERRED
+                   and overlaps(start, end, minutes(rule.starts_at), minutes(rule.ends_at)))
+    merged = []
+    for left, right in spans:
+        if merged and left <= merged[-1][1]:
+            merged[-1] = (merged[-1][0], max(merged[-1][1], right))
+        else:
+            merged.append((left, right))
+    return sum(right - left for left, right in merged)
 
 
 def intraday_break_issue(term_id, teacher_id, weekday, start, end, *, session_id=None, event_id=None):
@@ -65,6 +97,9 @@ def validate_session(session, other_sessions=None):
         add("INACTIVE_RESOURCE", "A oferta, o professor ou a sala está inativo.")
     if not offering.eligible_teachers.filter(pk=session.teacher_id).exists():
         add("TEACHER_NOT_ELIGIBLE", "O professor não está habilitado para esta oferta.", "teacher", session.teacher_id)
+    availability = availability_issue(session.teacher_id, term_id, session.weekday, start, end)
+    if availability:
+        add(availability["code"], availability["message"], "teacher", session.teacher_id)
     required = set(offering.required_features.values_list("id", flat=True)) | set(offering.subject.required_features.values_list("id", flat=True))
     available = set(session.room.features.values_list("id", flat=True))
     if not required.issubset(available):

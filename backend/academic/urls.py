@@ -20,6 +20,7 @@ for route, viewset in [
     ("time-profiles", views.TimeProfileViewSet),
     ("time-windows", views.TimeWindowViewSet),
     ("time-blocks", views.TimeBlockViewSet),
+    ("teacher-availability", views.TeacherAvailabilityViewSet),
     ("teacher-events", views.TeacherEventViewSet),
     ("schedules", views.ScheduleViewSet),
 ]:

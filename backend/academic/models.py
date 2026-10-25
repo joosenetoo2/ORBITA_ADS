@@ -308,6 +308,40 @@ class TimeBlock(ActiveModel):
         validate_time_scope(self)
 
 
+class TeacherAvailability(ActiveModel):
+    """Weekly teaching rule for one teacher in one academic term."""
+
+    class Kind(models.TextChoices):
+        AVAILABLE = "AVAILABLE", "Pode lecionar"
+        UNAVAILABLE = "UNAVAILABLE", "Indisponível"
+        PREFERRED = "PREFERRED", "Preferido"
+
+    teacher = models.ForeignKey(Teacher, on_delete=models.PROTECT, related_name="availability_rules")
+    term = models.ForeignKey(AcademicTerm, on_delete=models.PROTECT, related_name="teacher_availability_rules")
+    weekday = models.PositiveSmallIntegerField(choices=Weekday.choices)
+    starts_at = models.TimeField()
+    ends_at = models.TimeField()
+    kind = models.CharField(max_length=12, choices=Kind.choices)
+    note = models.CharField(max_length=180, blank=True)
+
+    class Meta:
+        ordering = ["teacher_id", "weekday", "starts_at", "kind"]
+        constraints = [models.UniqueConstraint(
+            fields=["teacher", "term", "weekday", "starts_at", "ends_at", "kind"],
+            name="unique_teacher_availability_rule",
+        )]
+        indexes = [models.Index(fields=["term", "teacher", "weekday"])]
+
+    def clean(self):
+        errors = {}
+        if self.teacher_id and self.term_id and self.teacher.institution_id != self.term.institution_id:
+            errors["term"] = "O período letivo pertence a outra instituição."
+        if self.starts_at and self.ends_at and self.starts_at >= self.ends_at:
+            errors["ends_at"] = "O fim deve ser posterior ao início."
+        if errors:
+            raise ValidationError(errors)
+
+
 class TeacherEvent(ActiveModel):
     """Recurring weekly commitment that belongs only to a teacher's agenda."""
 

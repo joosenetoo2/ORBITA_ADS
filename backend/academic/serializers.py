@@ -21,6 +21,7 @@ class CleanModelSerializer(serializers.ModelSerializer):
             models.TimeProfile: ("institution",),
             models.TimeWindow: ("institution",),
             models.TimeBlock: ("institution",),
+            models.TeacherAvailability: ("teacher", "term"),
             models.TeacherEvent: ("teacher", "term"),
         }.get(type(instance), ())
         if self.instance:
@@ -110,6 +111,7 @@ SessionRequirementSerializer = serializer_for(models.SessionRequirement)
 TimeProfileSerializer = serializer_for(models.TimeProfile)
 TimeWindowSerializer = serializer_for(models.TimeWindow)
 TimeBlockSerializer = serializer_for(models.TimeBlock)
+TeacherAvailabilitySerializer = serializer_for(models.TeacherAvailability)
 TeacherEventSerializer = serializer_for(models.TeacherEvent)
 class ScheduleSerializer(CleanModelSerializer):
     course_name = serializers.CharField(source="course.name", read_only=True)

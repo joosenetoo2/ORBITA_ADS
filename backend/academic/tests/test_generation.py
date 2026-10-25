@@ -8,7 +8,7 @@ from academic import generation
 from academic.catalog_flow import offer_subject
 from academic.models import (
     AcademicTerm, ClassGroup, Course, GenerationCandidate, Institution, Room,
-    Schedule, ScheduleSlot, ScheduledSession, Subject, Teacher, TeacherEvent,
+    Schedule, ScheduleSlot, ScheduledSession, Subject, Teacher, TeacherAvailability, TeacherEvent,
     TimeProfile, TimeWindow,
 )
 
@@ -83,6 +83,77 @@ class GenerationTests(TestCase):
         report = generation.preflight(self.schedule)
         self.assertFalse(report["ready"])
         self.assertIn("TEACHER_UNAVAILABLE", {item["code"] for item in report["issues"]})
+
+    def test_allowed_days_restrict_generator_and_manual_grid(self):
+        created = self.client.post("/api/v1/teacher-availability/", {
+            "teacher": self.teacher.pk, "term": self.schedule.term_id, "weekdays": [2],
+            "starts_at": "18:00", "ends_at": "21:00", "kind": "AVAILABLE",
+        }, format="json")
+        self.assertEqual(created.status_code, 201, created.data)
+        state, report, candidates = generation.solve(self.schedule, time_limit=4, alternatives=1)
+        self.assertTrue(report["ready"], report)
+        self.assertIn(state, {"FEASIBLE", "OPTIMAL"})
+        self.assertEqual({item["weekday"] for item in candidates[0]["allocations"]}, {2})
+        response = self.client.post(f"/api/v1/schedules/{self.schedule.pk}/quick-cells/", {
+            "group_id": self.group.pk, "weekday": 1, "slot_id": self.schedule.slots.first().pk,
+            "span": 1, "subject": "Banco de Dados", "teacher": "Ana", "room": "Sala 1",
+        }, format="json", HTTP_IF_MATCH="1")
+        self.assertEqual(response.status_code, 409, response.data)
+        self.assertIn("OUTSIDE_TEACHER_AVAILABILITY", {item["code"] for item in response.data["conflicts"]})
+
+    def test_preferred_hours_guide_solution_without_becoming_hard_rule(self):
+        response = self.client.post("/api/v1/teacher-availability/", {
+            "teacher": self.teacher.pk, "term": self.schedule.term_id, "weekdays": [2],
+            "starts_at": "18:00", "ends_at": "21:00", "kind": "PREFERRED",
+        }, format="json")
+        self.assertEqual(response.status_code, 201, response.data)
+        state, _, candidates = generation.solve(self.schedule, time_limit=4, alternatives=1)
+        self.assertIn(state, {"FEASIBLE", "OPTIMAL"})
+        self.assertEqual({item["weekday"] for item in candidates[0]["allocations"]}, {2})
+        manual = self.client.post(f"/api/v1/schedules/{self.schedule.pk}/quick-cells/", {
+            "group_id": self.group.pk, "weekday": 1, "slot_id": self.schedule.slots.first().pk,
+            "span": 1, "subject": "Banco de Dados", "teacher": "Ana", "room": "Sala 1",
+        }, format="json", HTTP_IF_MATCH="1")
+        self.assertEqual(manual.status_code, 200, manual.data)
+
+    def test_restrictive_change_is_rejected_if_lesson_already_exists(self):
+        from academic.quick_grid import save_cell
+        slot = self.schedule.slots.first()
+        session = save_cell(self.schedule, {"group_id": self.group.pk, "weekday": 1, "slot_id": slot.pk,
+                                            "span": 1, "subject": "Banco de Dados", "teacher": "Ana", "room": "Sala 1"})
+        denied = self.client.post("/api/v1/teacher-availability/", {
+            "teacher": self.teacher.pk, "term": self.schedule.term_id, "weekdays": [1],
+            "starts_at": "18:00", "ends_at": "19:00", "kind": "UNAVAILABLE",
+        }, format="json")
+        self.assertEqual(denied.status_code, 409, denied.data)
+        self.assertEqual(denied.data["affected_session_ids"], [session.pk])
+        self.assertEqual(TeacherAvailability.objects.count(), 0)
+        allowed = self.client.post("/api/v1/teacher-availability/", {
+            "teacher": self.teacher.pk, "term": self.schedule.term_id, "weekdays": [1],
+            "starts_at": "18:00", "ends_at": "19:00", "kind": "AVAILABLE",
+        }, format="json")
+        self.assertEqual(allowed.status_code, 201, allowed.data)
+        rule_id = allowed.data[0]["id"]
+        changed = self.client.patch(f"/api/v1/teacher-availability/{rule_id}/", {
+            "starts_at": "19:00", "ends_at": "21:00",
+        }, format="json")
+        self.assertEqual(changed.status_code, 409, changed.data)
+        self.assertEqual(TeacherAvailability.objects.get(pk=rule_id).starts_at, time(18))
+
+    def test_deleting_only_allowed_day_that_has_lessons_is_safe_but_deleting_one_of_two_is_checked(self):
+        from academic.quick_grid import save_cell
+        slot = self.schedule.slots.first()
+        save_cell(self.schedule, {"group_id": self.group.pk, "weekday": 1, "slot_id": slot.pk,
+                                  "span": 1, "subject": "Banco de Dados", "teacher": "Ana", "room": "Sala 1"})
+        response = self.client.post("/api/v1/teacher-availability/", {
+            "teacher": self.teacher.pk, "term": self.schedule.term_id, "weekdays": [1, 2],
+            "starts_at": "18:00", "ends_at": "21:00", "kind": "AVAILABLE",
+        }, format="json")
+        self.assertEqual(response.status_code, 201, response.data)
+        monday = next(item["id"] for item in response.data if item["weekday"] == 1)
+        denied = self.client.delete(f"/api/v1/teacher-availability/{monday}/")
+        self.assertEqual(denied.status_code, 409, denied.data)
+        self.assertTrue(TeacherAvailability.objects.filter(pk=monday).exists())
 
     def test_preflight_reports_shared_room_shortage(self):
         for index in (2, 3):

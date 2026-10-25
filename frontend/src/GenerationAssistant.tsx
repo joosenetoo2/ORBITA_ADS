@@ -13,9 +13,9 @@ type Job = { id: number; status: string; report: Report; candidates: Candidate[]
 const weekdays = ['Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb', 'Dom'];
 const hours = (minutes: number) => `${Math.floor(minutes / 60)}h${minutes % 60 ? String(minutes % 60).padStart(2, '0') : ''}`;
 
-export default function GenerationAssistant({ scheduleId, revision, onClose, onApplied, onOpenOffers, onOpenTimeProfiles }: {
+export default function GenerationAssistant({ scheduleId, revision, onClose, onApplied, onOpenOffers, onOpenTimeProfiles, onOpenAvailability }: {
   scheduleId: number; revision: number; onClose: () => void; onApplied: () => void;
-  onOpenOffers?: () => void; onOpenTimeProfiles?: () => void;
+  onOpenOffers?: () => void; onOpenTimeProfiles?: () => void; onOpenAvailability?: () => void;
 }) {
   const [mode, setMode] = useState<Mode>('FILL');
   const [report, setReport] = useState<Report | null>(null);
@@ -91,7 +91,7 @@ export default function GenerationAssistant({ scheduleId, revision, onClose, onA
           </div>
           {blockers.length > 0 && <div className="generation-issues" role="alert"><h3><AlertCircle size={18} /> {blockers.length} pendência{blockers.length !== 1 ? 's' : ''} impedem a geração</h3>{blockers.map((item, index) => <div className="generation-issue" key={`${item.code}-${item.group_code}-${index}`}><strong>{item.group_code && `${item.group_code} · `}{item.subject_name || item.code}</strong><span>{item.message}</span></div>)}</div>}
           {warnings.length > 0 && <div className="generation-warnings"><h3>Antes de aplicar</h3>{warnings.map((item, index) => <p key={`${item.code}-${index}`}>{item.group_code && `${item.group_code} · `}{item.message}</p>)}</div>}
-          {blockers.length > 0 && <div className="generation-links"><button className="button small" type="button" onClick={onOpenOffers}>Revisar ofertas <ArrowRight size={15} /></button><button className="button small" type="button" onClick={onOpenTimeProfiles}>Revisar janelas <ArrowRight size={15} /></button></div>}
+          {blockers.length > 0 && <div className="generation-links"><button className="button small" type="button" onClick={onOpenOffers}>Revisar ofertas <ArrowRight size={15} /></button><button className="button small" type="button" onClick={onOpenTimeProfiles}>Revisar janelas <ArrowRight size={15} /></button><button className="button small" type="button" onClick={onOpenAvailability}>Disponibilidade docente <ArrowRight size={15} /></button></div>}
           {job?.status === 'INFEASIBLE' && !blockers.length && <div className="generation-issues"><h3><AlertCircle size={18} /> Não foi possível encaixar todas as aulas</h3><p>Revise a disponibilidade de professores, a capacidade das salas, as janelas e as aulas fixadas.</p></div>}
           {job?.status === 'UNKNOWN' && <div className="generation-warnings"><p>A busca terminou sem uma solução comprovada. Ajuste os recursos ou tente novamente.</p></div>}
           {candidate && <section className="generation-results"><div className="generation-results-head"><div><span className="eyebrow">PROPOSTA</span><h3>{candidate.metrics.blocks} blocos · {candidate.metrics.hours} horas presenciais</h3></div><div className="generation-tabs" role="group" aria-label="Alternativas">{job?.candidates.map((item, index) => <button type="button" key={item.id} className={index === selected ? 'active' : ''} onClick={() => setSelected(index)}>Opção {index + 1}</button>)}</div></div><div className="generation-list">{candidate.allocations.map((item, index) => <div className="generation-allocation" key={index}><span className="generation-day">{weekdays[item.weekday - 1]}<small>{item.start}–{item.end}</small></span><strong>{item.subject}</strong><span>{item.teacher}</span><span>{item.room}</span></div>)}</div></section>}

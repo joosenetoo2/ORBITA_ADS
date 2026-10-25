@@ -227,7 +227,7 @@ function parseLesson(value: string) {
   throw new Error(`Formato da célula não reconhecido: "${value.slice(0, 50)}". Informe:\nLinha 1: Disciplina\nLinha 2: Professor - Sala`);
 }
 
-export default function GridWorkspace({ onSetup, onOpenOffers, onOpenTimeProfiles, initialScheduleId, canPublish = false }: { onSetup?: () => void; onOpenOffers?: () => void; onOpenTimeProfiles?: () => void; initialScheduleId?: number | null; canPublish?: boolean }) {
+export default function GridWorkspace({ onSetup, onOpenOffers, onOpenTimeProfiles, onOpenAvailability, initialScheduleId, canPublish = false }: { onSetup?: () => void; onOpenOffers?: () => void; onOpenTimeProfiles?: () => void; onOpenAvailability?: () => void; initialScheduleId?: number | null; canPublish?: boolean }) {
   const [schedules, setSchedules] = useState<RecordItem[]>([]);
   const [scheduleId, setScheduleId] = useState<number | null>(null);
   const [grid, setGrid] = useState<Grid | null>(null);
@@ -1618,7 +1618,7 @@ export default function GridWorkspace({ onSetup, onOpenOffers, onOpenTimeProfile
           </section>
         </div>
       )}
-      {generationOpen && grid && <GenerationAssistant scheduleId={grid.id} revision={grid.revision} onClose={() => setGenerationOpen(false)} onApplied={() => { setGenerationOpen(false); setNotice('Proposta aplicada à grade. Revise as aulas antes de publicar.'); void loadGrid(grid.id); }} onOpenOffers={() => { setGenerationOpen(false); onOpenOffers?.(); }} onOpenTimeProfiles={() => { setGenerationOpen(false); onOpenTimeProfiles?.(); }} />}
+      {generationOpen && grid && <GenerationAssistant scheduleId={grid.id} revision={grid.revision} onClose={() => setGenerationOpen(false)} onApplied={() => { setGenerationOpen(false); setNotice('Proposta aplicada à grade. Revise as aulas antes de publicar.'); void loadGrid(grid.id); }} onOpenOffers={() => { setGenerationOpen(false); onOpenOffers?.(); }} onOpenTimeProfiles={() => { setGenerationOpen(false); onOpenTimeProfiles?.(); }} onOpenAvailability={() => { setGenerationOpen(false); onOpenAvailability?.(); }} />}
       {/* Floating Toast Notification for Drag & Drop and Instant Feedback */}
       {toast && (
         <div className={`grid-floating-toast toast-${toast.type}`} role="alert">

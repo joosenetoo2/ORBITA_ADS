@@ -14,7 +14,7 @@ from ortools.sat.python import cp_model
 
 from . import models
 from .quick_grid import GridConflict, reconcile, save_cell
-from .scheduling import validate_session
+from .scheduling import availability_issue, preferred_minutes, validate_session
 from .workload import audit_intervals
 
 
@@ -148,9 +148,12 @@ def _context(schedule, mode):
     for block in models.TimeBlock.objects.filter(institution=institution, is_active=True):
         blocks[block.weekday].append(block)
     rooms = list(models.Room.objects.filter(institution=institution, is_active=True).prefetch_related("features"))
+    availability = defaultdict(list)
+    for rule in models.TeacherAvailability.objects.filter(term=schedule.term, is_active=True):
+        availability[rule.teacher_id].append(rule)
     return {"schedule": schedule, "groups": groups, "offerings": offerings, "slots": slots,
             "rooms": rooms, "windows": windows, "blocks": blocks, "fixed": fixed,
-            "preserved": preserved, "mode": mode}
+            "preserved": preserved, "availability": availability, "mode": mode}
 
 
 def _slot_spans(slots, duration):
@@ -179,6 +182,11 @@ def _options(context, offering, teacher, rooms, duration):
                 if not _fits_windows(context, offering, teacher.pk, room.pk, weekday, start, end):
                     rejected["WINDOW"] += 1
                     continue
+                availability = availability_issue(teacher.pk, context["schedule"].term_id, weekday,
+                                                  start, end, context["availability"][teacher.pk])
+                if availability:
+                    rejected[availability["code"]] += 1
+                    continue
                 if _blocked(context, offering, teacher.pk, room.pk, weekday, start, end):
                     rejected["BLOCK"] += 1
                     continue
@@ -186,12 +194,17 @@ def _options(context, offering, teacher, rooms, duration):
                 if conflict:
                     rejected[conflict] += 1
                     continue
+                teacher_rules = context["availability"][teacher.pk]
+                preferred = preferred_minutes(weekday, start, end, teacher_rules)
+                has_preferences = any(rule.kind == models.TeacherAvailability.Kind.PREFERRED for rule in teacher_rules)
                 options.append({"offering_id": offering.pk, "group_id": offering.group_id,
                                 "subject": offering.subject.name, "teacher_id": teacher.pk,
                                 "teacher": teacher.name, "room_id": room.pk, "room": room.name or room.code,
                                 "room_code": room.code,
                                 "weekday": weekday, "start": start, "end": end,
-                                "slot_id": first.pk, "span": len(chosen)})
+                                "slot_id": first.pk, "span": len(chosen),
+                                "preferred": bool(preferred),
+                                "preference_penalty": (end - start - preferred) // 60 * 100 if has_preferences else 0})
     return options, rejected
 
 
@@ -246,7 +259,10 @@ def prepare(schedule, mode="FILL", *, flexible=False):
                 code = "NO_BLOCK_CANDIDATE"
                 reason = "O bloco não cabe em nenhuma combinação livre de janela, docente e sala."
                 resource_rejected = sum(value for key, value in rejected.items() if key != "WINDOW")
-                if resource_rejected and rejected["TEACHER_BUSY"] + rejected["TEACHER_REST"] >= resource_rejected / 2:
+                availability_rejected = rejected["TEACHER_UNAVAILABLE"] + rejected["OUTSIDE_TEACHER_AVAILABILITY"]
+                if resource_rejected and availability_rejected >= resource_rejected / 2:
+                    code, reason = "TEACHER_UNAVAILABLE", "Nenhuma faixa permitida do professor comporta este bloco. Revise a disponibilidade docente."
+                elif resource_rejected and rejected["TEACHER_BUSY"] + rejected["TEACHER_REST"] >= resource_rejected / 2:
                     code, reason = "TEACHER_UNAVAILABLE", "O professor está ocupado ou sem o descanso necessário nas faixas possíveis."
                 elif resource_rejected and rejected["ROOM_BUSY"] >= resource_rejected / 2:
                     code, reason = "ROOM_UNAVAILABLE", "As salas compatíveis estão ocupadas nas faixas possíveis."
@@ -319,7 +335,7 @@ def _solve_once(context, blocks, *, time_limit, excluded=()):
                     model.AddBoolOr([left_var.Not(), right_var.Not()])
     for excluded_choices in excluded:
         model.AddBoolOr([variables[block][option].Not() for block, option in excluded_choices])
-    model.Minimize(sum(variable * (option["weekday"] * 12 + option["start"] // 60 + option["room_id"] % 5)
+    model.Minimize(sum(variable * (option["preference_penalty"] + option["weekday"] * 12 + option["start"] // 60 + option["room_id"] % 5)
                        for block, row in zip(blocks, variables)
                        for variable, option in zip(row, block["options"])))
     solver = cp_model.CpSolver()

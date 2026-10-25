@@ -366,6 +366,101 @@ class TimeBlockViewSet(SafeTimeConfigurationMixin, AcademicViewSet):
     admin_only = True
 
 
+class TeacherAvailabilityViewSet(AcademicViewSet):
+    queryset = models.TeacherAvailability.objects.select_related("teacher", "term").all()
+    serializer_class = serializers.TeacherAvailabilitySerializer
+    coordinator_only = True
+
+    def get_queryset(self):
+        queryset = super().get_queryset()
+        if self.request.query_params.get("term_id"):
+            queryset = queryset.filter(term_id=self.request.query_params["term_id"])
+        if self.request.query_params.get("teacher_id"):
+            queryset = queryset.filter(teacher_id=self.request.query_params["teacher_id"])
+        return queryset
+
+    @staticmethod
+    def _lesson_issues(teacher_id, term_id):
+        sessions = models.ScheduledSession.objects.filter(teacher_id=teacher_id, schedule__term_id=term_id).select_related(
+            "schedule", "room", "teacher", "requirement__offering__group__course", "requirement__offering__subject"
+        )
+        availability_codes = {"TEACHER_UNAVAILABLE", "OUTSIDE_TEACHER_AVAILABILITY"}
+        return {session.pk: {item["code"] for item in validate_session(session)} & availability_codes
+                for session in sessions}
+
+    @staticmethod
+    def _affected(before, after):
+        return [session_id for session_id, codes in after.items() if codes - before.get(session_id, set())]
+
+    def create(self, request, *args, **kwargs):
+        days = request.data.get("weekdays")
+        if days is None:
+            days = [request.data.get("weekday")]
+        if not isinstance(days, list) or not days or len(days) > 7:
+            raise ValidationError({"weekdays": "Selecione de um a sete dias."})
+        try:
+            days = [int(day) for day in days]
+        except (TypeError, ValueError):
+            raise ValidationError({"weekdays": "Selecione dias válidos."})
+        if len(days) != len(set(days)) or any(day not in range(1, 8) for day in days):
+            raise ValidationError({"weekdays": "Selecione dias válidos sem repetição."})
+        serializers_to_save = []
+        for day in days:
+            payload = {key: value for key, value in request.data.items() if key != "weekdays"}
+            payload["weekday"] = day
+            serializer = self.get_serializer(data=payload)
+            serializer.is_valid(raise_exception=True)
+            serializers_to_save.append(serializer)
+        teacher = serializers_to_save[0].validated_data["teacher"]
+        term = serializers_to_save[0].validated_data["term"]
+        with transaction.atomic():
+            before = self._lesson_issues(teacher.pk, term.pk)
+            saved = [serializer.save() for serializer in serializers_to_save]
+            affected = self._affected(before, self._lesson_issues(teacher.pk, term.pk))
+            if affected:
+                transaction.set_rollback(True)
+                return Response({"code": "AVAILABILITY_AFFECTS_SESSIONS",
+                                 "message": "A regra impediria aulas já alocadas. Ajuste a regra ou mova essas aulas primeiro.",
+                                 "affected_session_ids": affected}, status=status.HTTP_409_CONFLICT)
+            models.AuditEvent.objects.create(actor=request.user, action="TEACHER_AVAILABILITY_CREATED",
+                                             entity="TeacherAvailability", entity_id=",".join(str(item.pk) for item in saved),
+                                             metadata={"teacher_id": teacher.pk, "term_id": term.pk, "days": days})
+        return Response(self.get_serializer(saved, many=True).data, status=status.HTTP_201_CREATED)
+
+    def partial_update(self, request, *args, **kwargs):
+        instance = self.get_object()
+        serializer = self.get_serializer(instance, data=request.data, partial=True)
+        serializer.is_valid(raise_exception=True)
+        with transaction.atomic():
+            before = self._lesson_issues(instance.teacher_id, instance.term_id)
+            saved = serializer.save()
+            affected = self._affected(before, self._lesson_issues(instance.teacher_id, instance.term_id))
+            if affected:
+                transaction.set_rollback(True)
+                return Response({"code": "AVAILABILITY_AFFECTS_SESSIONS",
+                                 "message": "A alteração impediria aulas já alocadas. Ajuste a regra ou mova essas aulas primeiro.",
+                                 "affected_session_ids": affected}, status=status.HTTP_409_CONFLICT)
+            models.AuditEvent.objects.create(actor=request.user, action="TEACHER_AVAILABILITY_UPDATED",
+                                             entity="TeacherAvailability", entity_id=str(saved.pk), metadata={"values": serializer.data})
+        return Response(serializer.data)
+
+    def destroy(self, request, *args, **kwargs):
+        instance = self.get_object()
+        teacher_id, term_id, rule_id = instance.teacher_id, instance.term_id, instance.pk
+        with transaction.atomic():
+            before = self._lesson_issues(teacher_id, term_id)
+            instance.delete()
+            affected = self._affected(before, self._lesson_issues(teacher_id, term_id))
+            if affected:
+                transaction.set_rollback(True)
+                return Response({"code": "AVAILABILITY_AFFECTS_SESSIONS",
+                                 "message": "Remover esta faixa deixaria aulas fora da disponibilidade do professor.",
+                                 "affected_session_ids": affected}, status=status.HTTP_409_CONFLICT)
+            models.AuditEvent.objects.create(actor=request.user, action="TEACHER_AVAILABILITY_DELETED",
+                                             entity="TeacherAvailability", entity_id=str(rule_id))
+        return Response(status=status.HTTP_204_NO_CONTENT)
+
+
 class TeacherEventViewSet(AcademicViewSet):
     queryset = models.TeacherEvent.objects.select_related("teacher", "term").all().order_by("weekday", "starts_at", "pk")
     serializer_class = serializers.TeacherEventSerializer
