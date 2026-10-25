@@ -207,6 +207,7 @@ class SubjectOffering(ActiveModel):
     group = models.ForeignKey(ClassGroup, on_delete=models.PROTECT, related_name="offerings")
     subject = models.ForeignKey(Subject, on_delete=models.PROTECT)
     weekly_minutes = models.PositiveIntegerField(default=0)
+    assigned_teacher = models.ForeignKey(Teacher, null=True, blank=True, on_delete=models.PROTECT, related_name="assigned_offerings")
     eligible_teachers = models.ManyToManyField(Teacher, blank=True)
     required_features = models.ManyToManyField(RoomFeature, blank=True)
 
@@ -221,6 +222,8 @@ class SubjectOffering(ActiveModel):
             raise ValidationError({"subject": "A disciplina pertence a outra instituição."})
         if self.group_id and self.subject_id and self.group.period_number != self.subject.period_number:
             raise ValidationError({"subject": "A disciplina pertence a outro período curricular."})
+        if self.group_id and self.assigned_teacher_id and self.group.course.institution_id != self.assigned_teacher.institution_id:
+            raise ValidationError({"assigned_teacher": "O professor designado pertence a outra instituição."})
 
 
 class SessionRequirement(models.Model):
@@ -418,6 +421,43 @@ class ScheduleVersion(models.Model):
 
     class Meta:
         constraints = [models.UniqueConstraint(fields=["schedule", "number"], name="unique_schedule_version")]
+
+
+class GenerationJob(models.Model):
+    class Status(models.TextChoices):
+        PENDING = "PENDING", "Pendente"
+        RUNNING = "RUNNING", "Executando"
+        FEASIBLE = "FEASIBLE", "Viável"
+        OPTIMAL = "OPTIMAL", "Ótima"
+        INFEASIBLE = "INFEASIBLE", "Inviável"
+        UNKNOWN = "UNKNOWN", "Inconclusiva"
+        FAILED = "FAILED", "Falhou"
+        CANCELLED = "CANCELLED", "Cancelada"
+
+    schedule = models.ForeignKey(Schedule, on_delete=models.CASCADE, related_name="generation_jobs")
+    requested_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.PROTECT)
+    base_revision = models.PositiveIntegerField()
+    mode = models.CharField(max_length=16, default="FILL")
+    status = models.CharField(max_length=12, choices=Status.choices, default=Status.PENDING)
+    time_limit_seconds = models.PositiveSmallIntegerField(default=10)
+    input_signature = models.CharField(max_length=64, blank=True)
+    options = models.JSONField(default=dict)
+    report = models.JSONField(default=dict)
+    error = models.TextField(blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    started_at = models.DateTimeField(null=True, blank=True)
+    finished_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        ordering = ["-created_at"]
+
+
+class GenerationCandidate(models.Model):
+    job = models.ForeignKey(GenerationJob, on_delete=models.CASCADE, related_name="candidates")
+    score = models.IntegerField(default=0)
+    allocations = models.JSONField(default=list)
+    metrics = models.JSONField(default=dict)
+    created_at = models.DateTimeField(auto_now_add=True)
 
 
 class AuditEvent(models.Model):

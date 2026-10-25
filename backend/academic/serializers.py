@@ -92,7 +92,20 @@ class ClassGroupSerializer(CleanModelSerializer):
     class Meta:
         model = models.ClassGroup
         fields = "__all__"
-SubjectOfferingSerializer = serializer_for(models.SubjectOffering)
+class SubjectOfferingSerializer(CleanModelSerializer):
+    def validate(self, attrs):
+        eligible = attrs.get("eligible_teachers")
+        assigned = attrs.get("assigned_teacher", self.instance.assigned_teacher if self.instance else None)
+        if eligible is not None:
+            if assigned and assigned not in eligible:
+                raise serializers.ValidationError({"assigned_teacher": "O professor designado deve estar entre os professores vinculados."})
+            if not assigned and eligible:
+                attrs["assigned_teacher"] = eligible[0]
+        return super().validate(attrs)
+
+    class Meta:
+        model = models.SubjectOffering
+        fields = "__all__"
 SessionRequirementSerializer = serializer_for(models.SessionRequirement)
 TimeProfileSerializer = serializer_for(models.TimeProfile)
 TimeWindowSerializer = serializer_for(models.TimeWindow)

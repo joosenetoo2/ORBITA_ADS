@@ -5,6 +5,7 @@ from django.db import transaction
 from django.db.models import F
 from django.db.models.deletion import ProtectedError
 from django.shortcuts import get_object_or_404
+from django.utils import timezone
 from rest_framework import status, viewsets
 from rest_framework.decorators import action
 from rest_framework.exceptions import PermissionDenied, ValidationError
@@ -12,7 +13,7 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 from rest_framework.permissions import AllowAny
 
-from . import models, serializers
+from . import generation, models, serializers
 from .permissions import AcademicPermission
 from .scheduling import candidate_starts, validate_session, validate_teacher_event
 from .quick_grid import GridConflict, delete_cell, make_code, parse_time, reconcile, save_cell
@@ -56,6 +57,43 @@ def viewset_for(model, serializer, *, admin_only=False):
         "serializer_class": serializer,
         "admin_only": admin_only,
     })
+
+
+def generation_job_data(job):
+    return {
+        "id": job.pk, "schedule_id": job.schedule_id, "base_revision": job.base_revision,
+        "mode": job.mode, "status": job.status, "report": job.report, "error": job.error,
+        "created_at": job.created_at,
+        "candidates": [{"id": item.pk, "score": item.score, "metrics": item.metrics,
+                        "allocations": item.allocations} for item in job.candidates.order_by("score", "pk")],
+    }
+
+
+class GenerationJobView(APIView):
+    permission_classes = [AcademicPermission]
+
+    def get(self, request, job_id):
+        job = get_object_or_404(models.GenerationJob, pk=job_id)
+        return Response(generation_job_data(job))
+
+
+class GenerationCandidateApplyView(APIView):
+    permission_classes = [AcademicPermission]
+    coordinator_only = True
+
+    def post(self, request, candidate_id):
+        candidate = get_object_or_404(models.GenerationCandidate.objects.select_related("job"), pk=candidate_id)
+        try:
+            revision = int(request.headers.get("If-Match", ""))
+        except ValueError:
+            raise ValidationError({"code": "REVISION_REQUIRED", "message": "Envie a revisão atual em If-Match."})
+        try:
+            new_revision = generation.apply_candidate(candidate, revision, request.user)
+        except ValueError as exc:
+            return Response({"code": "STALE_PROPOSAL", "message": str(exc)}, status=status.HTTP_409_CONFLICT)
+        except GridConflict as exc:
+            return Response({"code": "GRID_CONFLICT", "conflicts": exc.conflicts}, status=status.HTTP_409_CONFLICT)
+        return Response({"revision": new_revision, "applied": len(candidate.allocations)})
 
 
 class InstitutionViewSet(AcademicViewSet):
@@ -391,6 +429,54 @@ class ScheduleViewSet(AcademicViewSet):
     queryset = models.Schedule.objects.select_related("course", "term", "time_profile").all().order_by("pk")
     serializer_class = serializers.ScheduleSerializer
     http_method_names = ["get", "post", "delete", "head", "options"]
+
+    @action(detail=True, methods=["get"], url_path="generation/preflight")
+    def generation_preflight(self, request, pk=None):
+        mode = request.query_params.get("mode", "FILL")
+        try:
+            report = generation.preflight(self.get_object(), mode)
+        except ValueError as exc:
+            raise ValidationError({"mode": str(exc)}) from exc
+        return Response(report)
+
+    @action(detail=True, methods=["post"], url_path="generation")
+    def generate(self, request, pk=None):
+        if not (request.user.is_superuser or request.user.groups.filter(name__in=["Administrador", "Coordenador"]).exists()):
+            raise PermissionDenied("A geração de horários é exclusiva da coordenação.")
+        schedule = self.get_object()
+        self._check_revision(request, schedule)
+        mode = request.data.get("mode", "FILL")
+        if mode not in {"FILL", "REARRANGE"}:
+            raise ValidationError({"mode": "Escolha preencher lacunas ou reorganizar aulas não fixadas."})
+        try:
+            seconds = int(request.data.get("time_limit_seconds", 10))
+        except (ValueError, TypeError):
+            raise ValidationError({"time_limit_seconds": "Informe um tempo entre 1 e 30 segundos."})
+        if not 1 <= seconds <= 30:
+            raise ValidationError({"time_limit_seconds": "Informe um tempo entre 1 e 30 segundos."})
+        job = models.GenerationJob.objects.create(
+            schedule=schedule, requested_by=request.user, base_revision=schedule.revision,
+            mode=mode, time_limit_seconds=seconds, status=models.GenerationJob.Status.RUNNING,
+            started_at=timezone.now(),
+        )
+        try:
+            state, report, candidates = generation.solve(schedule, mode, time_limit=seconds, alternatives=2)
+            job.status = state
+            job.report = report
+            job.finished_at = timezone.now()
+            job.save(update_fields=["status", "report", "finished_at"])
+            for item in candidates:
+                models.GenerationCandidate.objects.create(job=job, **item)
+            models.AuditEvent.objects.create(actor=request.user, action="GENERATION_FINISHED",
+                                             entity="GenerationJob", entity_id=str(job.pk),
+                                             metadata={"status": state, "candidates": len(candidates)})
+        except Exception as exc:
+            job.status = models.GenerationJob.Status.FAILED
+            job.error = str(exc)
+            job.finished_at = timezone.now()
+            job.save(update_fields=["status", "error", "finished_at"])
+            raise
+        return Response(generation_job_data(job), status=status.HTTP_201_CREATED)
 
     def destroy(self, request, *args, **kwargs):
         schedule = self.get_object()

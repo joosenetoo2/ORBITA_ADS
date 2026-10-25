@@ -143,6 +143,7 @@ const labels: Record<string, string> = {
   subject: 'Disciplina',
   weekly_minutes: 'Carga semanal (minutos)',
   eligible_teachers: 'Professores elegíveis',
+  assigned_teacher: 'Professor designado',
   offering: 'Oferta',
   duration_minutes: 'Duração (minutos)',
   weekly_count: 'Encontros por semana',
@@ -230,6 +231,7 @@ const fieldsets: Record<Resource, Field[]> = {
     { key: 'group', source: 'class-groups', required: true },
     { key: 'subject', source: 'subjects', required: true },
     { key: 'eligible_teachers', source: 'teachers', multiple: true, required: true },
+    { key: 'assigned_teacher', source: 'teachers' },
   ],
   'session-requirements': [],
   'time-profiles': [
@@ -299,7 +301,7 @@ function getResourceColumns(resource: Resource): string[] {
     : resource === 'time-blocks'
     ? ['weekday', 'starts_at', 'ends_at', 'reason', 'scope']
     : resource === 'subject-offerings'
-    ? ['group', 'subject', 'weekly_hours', 'eligible_teachers']
+    ? ['group', 'subject', 'assigned_teacher', 'weekly_hours', 'eligible_teachers']
     : resource === 'session-requirements'
     ? ['offering', 'duration_minutes', 'weekly_count', 'kind']
     : resource === 'institutions'

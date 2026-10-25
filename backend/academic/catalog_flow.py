@@ -23,8 +23,13 @@ def offer_subject(subject, group, teacher, block_hours=2):
         if offering.eligible_teachers.filter(pk=teacher.pk).exists():
             raise ValidationError({"offering": "Esta disciplina já está ofertada para esta turma com este professor. Use a oferta existente na grade."})
         offering.eligible_teachers.add(teacher)
+        if offering.assigned_teacher_id is None:
+            offering.assigned_teacher = teacher
+            offering.save(update_fields=["assigned_teacher", "updated_at"])
         return offering, False
     offering.eligible_teachers.add(teacher)
+    offering.assigned_teacher = teacher
+    offering.save(update_fields=["assigned_teacher", "updated_at"])
     desired_minutes = subject.onsite_weekly_hours * 60
     remaining_hours = subject.onsite_weekly_hours
     if remaining_hours:

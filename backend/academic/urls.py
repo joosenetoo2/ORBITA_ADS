@@ -27,6 +27,8 @@ for route, viewset in [
 
 session_detail = views.ScheduleSessionViewSet.as_view({"patch": "partial_update", "delete": "destroy"})
 urlpatterns = [
+    path("generation-jobs/<int:job_id>/", views.GenerationJobView.as_view(), name="generation-job"),
+    path("generation-candidates/<int:candidate_id>/apply/", views.GenerationCandidateApplyView.as_view(), name="generation-candidate-apply"),
     path("teacher-agenda/", views.TeacherAgendaView.as_view(), name="teacher-agenda"),
     path("public/schedules/", views.PublicScheduleView.as_view(), name="public-schedules"),
     path("public/schedules/<int:schedule_id>/", views.PublicScheduleView.as_view(), name="public-schedule-detail"),

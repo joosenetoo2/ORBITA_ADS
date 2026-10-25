@@ -12,6 +12,7 @@ import {
   Lock,
   Plus,
   Search,
+  Sparkles,
   Trash2,
   User,
   Users,
@@ -21,6 +22,7 @@ import { api, listAll, type Conflict, type RecordItem } from './api';
 import ValidationIssues from './ValidationIssues';
 import { matchesSearch } from './textUtils';
 import TeacherAgenda from './TeacherAgenda';
+import GenerationAssistant from './GenerationAssistant';
 import './grid.css';
 
 type Group = { id: number; code: string; name: string };
@@ -236,6 +238,7 @@ export default function GridWorkspace({ onSetup, onOpenOffers, onOpenTimeProfile
   const [dragHover, setDragHover] = useState('');
   const [setup, setSetup] = useState(false);
   const [deleteOpen, setDeleteOpen] = useState(false);
+  const [generationOpen, setGenerationOpen] = useState(false);
   const [slotSetup, setSlotSetup] = useState(false);
   const [profileStructure, setProfileStructure] = useState<ProfileStructure | null>(null);
   const [loadingProfiles, setLoadingProfiles] = useState(false);
@@ -1003,6 +1006,7 @@ export default function GridWorkspace({ onSetup, onOpenOffers, onOpenTimeProfile
 
               {/* View Switcher & Action Tools */}
               <div className="sheet-tools">
+                {canPublish && <button type="button" className="button small primary" disabled={busy || !grid.slots.length} onClick={() => setGenerationOpen(true)}><Sparkles size={16} /> Gerar sugestão</button>}
                 <button type="button" className="button small" disabled={busy} onClick={() => void checkPublication()}>Verificar pendências</button>
                 {currentSchedule?.published_version ? <><a className="button small" href={`/horarios?grade=${grid.id}`} target="_blank" rel="noopener noreferrer">Ver horário público</a>{canPublish && <button type="button" className="button small ghost" disabled={busy} onClick={() => void setPublication(false)}>Retirar publicação</button>}</> : null}
                 {canPublish && <button type="button" className="button small primary" disabled={busy || !grid.sessions.length} onClick={() => void setPublication(true)}>{currentSchedule?.published_version ? 'Republicar alterações' : 'Publicar horário'}</button>}
@@ -1614,6 +1618,7 @@ export default function GridWorkspace({ onSetup, onOpenOffers, onOpenTimeProfile
           </section>
         </div>
       )}
+      {generationOpen && grid && <GenerationAssistant scheduleId={grid.id} revision={grid.revision} onClose={() => setGenerationOpen(false)} onApplied={() => { setGenerationOpen(false); setNotice('Proposta aplicada à grade. Revise as aulas antes de publicar.'); void loadGrid(grid.id); }} onOpenOffers={() => { setGenerationOpen(false); onOpenOffers?.(); }} onOpenTimeProfiles={() => { setGenerationOpen(false); onOpenTimeProfiles?.(); }} />}
       {/* Floating Toast Notification for Drag & Drop and Instant Feedback */}
       {toast && (
         <div className={`grid-floating-toast toast-${toast.type}`} role="alert">
