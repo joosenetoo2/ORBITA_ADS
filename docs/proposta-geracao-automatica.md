@@ -6,7 +6,7 @@
 
 - Ação **Gerar sugestão** na grade: diagnóstico prévio, preenchimento de lacunas ou reorganização de aulas não fixadas, duas alternativas e aplicação explícita.
 - OR-Tools CP-SAT com carga presencial, blocos `AUTO_OFFER` preferenciais, divisão flexível por hora quando necessário, professor designado, sala ativa/compatível, janelas, bloqueios, eventos docentes, aulas de outras grades, sobreposições e descanso de 11 h. A auditoria de intrajornada usa as regras atuais.
-- Diagnósticos para dados ausentes, ausência de sala compatível, capacidade agregada insuficiente de uma sala obrigatória, falta de horários candidatos e inviabilidade combinada.
+- Diagnósticos para dados ausentes, ausência de sala compatível, tempo insuficiente de uma sala obrigatória, falta de horários candidatos e inviabilidade combinada. A quantidade de alunos da turma não é exigida nem usada para filtrar salas.
 - Propostas e execuções persistidas. Aplicação com revisão `If-Match`, validação da grade e transação, sem alterar versões publicadas até nova publicação.
 - Endpoints: `GET /api/v1/schedules/{id}/generation/preflight/`, `POST /api/v1/schedules/{id}/generation/`, `GET /api/v1/generation-jobs/{id}/` e `POST /api/v1/generation-candidates/{id}/apply/`.
 
@@ -21,7 +21,7 @@ Gerar uma ou mais propostas de grade semanal a partir das ofertas já preparadas
 | Existe hoje | Implicação para o gerador |
 | --- | --- |
 | `SubjectOffering`, `ClassGroup`, `TimeProfile`, `TimeWindow`, `TimeBlock`, `Room`, `RoomFeature`, `TeacherEvent` e `ScheduledSession` | Já há dados para construir candidatos e detectar conflitos semanais. |
-| `scheduling.validate_session()` e `workload.audit_intervals()` | Validam sobreposição, janelas, capacidade, recursos, intervalo intrajornada e descanso interjornada; precisam de adaptação para validar uma proposta **em memória**, sem gravá-la antes. |
+| `scheduling.validate_session()` e `workload.audit_intervals()` | Validam sobreposição, janelas, recursos, intervalo intrajornada e descanso interjornada; precisam de adaptação para validar uma proposta **em memória**, sem gravá-la antes. |
 | `ScheduleViewSet.validate()` | Compara horas presenciais da oferta com horas alocadas e protege publicação; pode ser a auditoria final, após aplicação transacional. |
 | `ScheduleSlot` e `_profile_structure()` | O conjunto de horários permitidos já deriva do perfil da grade; o gerador deve usar os mesmos slots e limites por dia. |
 | `ScheduledSession.is_locked`, revisão da grade e versões publicadas | Há base para preservar aulas fixas, impedir sobrescrita concorrente e manter a publicação atual. |
@@ -45,7 +45,7 @@ O campo legado `Teacher.max_weekly_minutes` continua no modelo e no validador, a
 - **Unidade:** cada hora-aula presencial equivale a 60 minutos no fluxo atual. Horas EAD não geram blocos na grade. A carga alvo é `Subject.onsite_weekly_hours`; `weekly_minutes` da oferta serve como compatibilidade para dados antigos e deve ser normalizado.
 - **Blocos:** permitir configuração por oferta, por exemplo `2 + 1` para 3 h semanais. Na primeira versão, usar o padrão `AUTO_OFFER` como preferência editável, com opção de divisão em blocos de 1 a 4 h. Um bloco marcado **indivisível** é restrição rígida; os demais podem ser repartidos sem alterar a carga total.
 - **Professor:** usar o docente designado na oferta como padrão. Acrescentar `assigned_teacher` ou uma relação explícita com papel e carga; tratar outros elegíveis como alternativas apenas se a coordenação permitir. Não escolher silenciosamente o primeiro elemento da lista.
-- **Salas:** filtrar por status ativo, capacidade, recursos exigidos pela disciplina e pela oferta, janela/bloqueio e ocupação no período letivo. Se capacidade da sala ou tamanho da turma estiver ausente e a verificação de capacidade for obrigatória, marcar **dado insuficiente** em vez de supor compatibilidade.
+- **Salas:** filtrar por status ativo, recursos exigidos pela disciplina e pela oferta, janela/bloqueio e ocupação no período letivo. A lotação de alunos não faz parte das restrições da grade; a capacidade cadastrada da sala fica apenas como informação.
 - **Ausências:** `TeacherEvent` e `TimeBlock` representam compromissos/bloqueios semanais e já devem retirar candidatos. Para ausência recorrente, oferecer cadastro simples que crie bloqueio docente. Ausência de uma data específica não cabe numa grade semanal recorrente: tratar posteriormente como substituição/reposição pontual, sem refazer silenciosamente o semestre.
 - **Escopo:** uma execução gera uma grade por curso, período letivo e perfil; ocupações das outras grades do mesmo período letivo entram como compromissos fixos de professores e salas. Mesmo perfil diferente (manhã/noite) importa para interjornada.
 - **Rascunho versus publicação:** as aulas atuais ficam em `ScheduledSession`, enquanto a versão publicada é um snapshot. A política de ocupação externa deve escolher explicitamente qual é a fonte autoritativa quando o rascunho mudou após publicar; não somar os dois como duas ocupações nem ignorar a versão que os alunos ainda veem. O padrão recomendado é proteger a publicação vigente e também sinalizar conflitos com rascunhos ativos, exigindo resolução antes de aplicar.
@@ -67,7 +67,7 @@ Usar intervalos semiabertos `[início, fim)`: terminar às 18:50 e iniciar às 1
 
 1. **Snapshot de cenário:** ler ofertas, slots, recursos, eventos, bloqueios e ocupações externas, com revisão da grade e horário da coleta. Congelar essa entrada para tornar execução e diagnóstico reproduzíveis.
 2. **Pré-checagem determinística:** verificar campos ausentes, horas semanais incompatíveis com janelas da turma, bloco maior que qualquer janela, zero professor elegível, zero sala compatível e demanda/capacidade por dia, tipo de sala e professor. Usar correspondência entre blocos e posições de sala compatíveis para detectar escassez que a contagem total de salas esconderia. Exemplo: 6 blocos de laboratório exigidos no mesmo turno e apenas 4 posições de laboratório disponíveis → gargalo comprovado por contagem. Essas verificações são condições necessárias, não prova geral de viabilidade.
-3. **Candidatos:** para cada bloco, enumerar combinações `(dia, início, professor, sala)` que caibam integralmente nas faixas do perfil e respeitem recursos, capacidade, janelas, bloqueios e ocupações fixas. Guardar o motivo de descarte por categoria para explicar **zero candidatos**.
+3. **Candidatos:** para cada bloco, enumerar combinações `(dia, início, professor, sala)` que caibam integralmente nas faixas do perfil e respeitem recursos, janelas, bloqueios e ocupações fixas. Guardar o motivo de descarte por categoria para explicar **zero candidatos**.
 4. **CP-SAT:** variável booleana por candidato; exatamente uma escolha por bloco obrigatório; incompatibilidades para pares que se sobreponham por turma/professor/sala; restrições de intervalo e descanso entre blocos de cada professor, inclusive manhã e noite. Minimizar preferências após satisfazer todas as restrições rígidas. Para aulas com blocos flexíveis, enumerar apenas partições permitidas e selecionar uma partição por oferta.
 5. **Resultado:** distinguir `OPTIMAL`, `FEASIBLE`, `INFEASIBLE`, `UNKNOWN`, `FAILED` e `CANCELLED`. Um timeout sem solução é **inconclusivo**, não falta comprovada de salas. Quando houver solução parcial exploratória, rotular como **rascunho incompleto** e nunca oferecer como proposta publicável.
 6. **Explicação:** usar pré-checagens e contagens de candidatos como evidência principal; para inviabilidade mais complexa, usar grupos de hipóteses por oferta/recurso e tentar extrair um núcleo de conflitos. Não prometer uma causa única se várias combinações explicarem o problema. Cada diagnóstico deve incluir `code`, severidade, oferta/turma, recurso, intervalo, evidência quantitativa e ação sugerida.
@@ -103,9 +103,9 @@ Exemplo de mensagem útil: **"P4-M · Banco de Dados II: faltam 2 h presenciais.
 ## Critérios de aceite mínimos
 
 - Uma disciplina de 3 h presenciais pode ser alocada em `2 + 1`; a hora EAD não aparece na grade.
-- Nenhuma proposta válida conflita com professor, sala, turma, evento docente, janela, bloqueio, recursos/capacidade, intrajornada ou 11 h de interjornada entre perfis.
+- Nenhuma proposta válida conflita com professor, sala, turma, evento docente, janela, bloqueio, recursos, intrajornada ou 11 h de interjornada entre perfis.
 - Aula fixada e aula de outra grade no mesmo período letivo permanecem intocadas.
-- Falta de sala compatível gera diagnóstico com demanda e capacidade observadas; capacidade desconhecida gera aviso de dado ausente, não conclusão falsa.
+- Falta de sala compatível ou de horas livres suficientes gera diagnóstico com a demanda observada.
 - Dados incompletos bloqueiam a geração da oferta afetada e apontam o cadastro necessário.
 - `UNKNOWN` por limite de tempo nunca é apresentado como inviabilidade comprovada.
 - Aplicar proposta com revisão desatualizada é recusado sem alterar a grade; publicação existente não muda.
@@ -117,5 +117,5 @@ Exemplo de mensagem útil: **"P4-M · Banco de Dados II: faltam 2 h presenciais.
 2. O padrão `2 + 1`, `1 + 1 + 1` etc. é preferência ou obrigação por disciplina? Quem pode marcar bloco indivisível?
 3. A geração pode mover aulas manuais não bloqueadas por padrão, ou só completar horas pendentes?
 4. Ocupações de grades ainda em rascunho do mesmo período letivo bloqueiam recursos? A proposta recomenda **sim**, com opção explícita de cenário isolado apenas para simulação.
-5. Capacidade de sala e número de alunos são obrigatórios para gerar? A proposta recomenda exigir os dois quando a compatibilidade de lotação fizer parte das regras da instituição.
+5. A lotação de alunos fica fora da geração conforme decisão da coordenação; a capacidade de assentos da sala é informativa.
 6. Ausência de um dia específico será tratada no módulo semanal ou num fluxo separado de reposição/substituição? A proposta recomenda fluxo separado.

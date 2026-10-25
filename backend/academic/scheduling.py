@@ -65,8 +65,6 @@ def validate_session(session, other_sessions=None):
         add("INACTIVE_RESOURCE", "A oferta, o professor ou a sala está inativo.")
     if not offering.eligible_teachers.filter(pk=session.teacher_id).exists():
         add("TEACHER_NOT_ELIGIBLE", "O professor não está habilitado para esta oferta.", "teacher", session.teacher_id)
-    if group.student_count is not None and session.room.capacity is not None and session.room.capacity < group.student_count:
-        add("ROOM_CAPACITY", "A capacidade da sala é insuficiente.", "room", session.room_id)
     required = set(offering.required_features.values_list("id", flat=True)) | set(offering.subject.required_features.values_list("id", flat=True))
     available = set(session.room.features.values_list("id", flat=True))
     if not required.issubset(available):

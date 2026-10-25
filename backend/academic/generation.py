@@ -202,7 +202,6 @@ def prepare(schedule, mode="FILL", *, flexible=False):
     issues = []
     blocks = []
     summaries = []
-    warned_group_sizes = set()
     sole_room_demand = Counter()
     sole_room_slots = defaultdict(set)
     if not context["slots"]:
@@ -230,19 +229,13 @@ def prepare(schedule, mode="FILL", *, flexible=False):
         if teacher is None:
             issues.append(issue("TEACHER_UNASSIGNED", "Defina um professor ativo e vinculado à oferta antes de gerar.", offering=offering))
             continue
-        if offering.group.student_count is None and offering.group_id not in warned_group_sizes:
-            issues.append(issue("STUDENT_COUNT_UNKNOWN", "Informe o número de alunos para conferir a capacidade das salas.", severity="WARNING", group=offering.group))
-            warned_group_sizes.add(offering.group_id)
         required_features = {feature.pk for feature in offering.required_features.all()} | {feature.pk for feature in offering.subject.required_features.all()}
         compatible = [room for room in context["rooms"]
-                      if (offering.group.student_count is None or room.capacity is None or room.capacity >= offering.group.student_count)
-                      and required_features.issubset({feature.pk for feature in room.features.all()})]
+                      if required_features.issubset({feature.pk for feature in room.features.all()})]
         if not compatible:
-            issues.append(issue("NO_COMPATIBLE_ROOM", "Não há sala ativa com capacidade e recursos compatíveis.", offering=offering,
-                                details={"students": offering.group.student_count, "required_feature_ids": sorted(required_features)}))
+            issues.append(issue("NO_COMPATIBLE_ROOM", "Não há sala ativa com os recursos exigidos pela disciplina.", offering=offering,
+                                details={"required_feature_ids": sorted(required_features)}))
             continue
-        if any(room.capacity is None for room in compatible) and offering.group.student_count is not None:
-            issues.append(issue("ROOM_CAPACITY_UNKNOWN", "Há sala compatível sem capacidade cadastrada; confirme a lotação.", severity="WARNING", offering=offering))
         durations = _partitions(offering, remaining, flexible)
         if remaining % 60:
             issues.append(issue("NON_CLASS_HOUR", "A carga restante não é múltipla de uma hora-aula.", offering=offering))
@@ -273,7 +266,7 @@ def prepare(schedule, mode="FILL", *, flexible=False):
         capacity = len(sole_room_slots[room_id]) * 60
         if demand > capacity:
             room = next(item for item in context["rooms"] if item.pk == room_id)
-            issues.append(issue("ROOM_CAPACITY_SHORTAGE", f"A sala {room.name or room.code} precisa receber {demand // 60}h, mas só dispõe de {capacity // 60}h compatíveis.",
+            issues.append(issue("ROOM_TIME_SHORTAGE", f"A sala {room.name or room.code} precisa receber {demand // 60}h, mas só dispõe de {capacity // 60}h livres compatíveis.",
                                 details={"room_id": room_id, "required_minutes": demand, "available_minutes": capacity}))
     summary = {"offerings": len(context["offerings"]),
                "required_minutes": sum(row["required_minutes"] for row in summaries),

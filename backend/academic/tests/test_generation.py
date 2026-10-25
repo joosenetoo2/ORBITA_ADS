@@ -22,7 +22,7 @@ class GenerationTests(TestCase):
         term = AcademicTerm.objects.create(institution=institution, name="2027.1", starts_on="2027-01-01", ends_on="2027-06-30")
         course = Course.objects.create(institution=institution, code="ADS", name="ADS")
         profile = TimeProfile.objects.create(institution=institution, name="Noite")
-        self.group = ClassGroup.objects.create(course=course, term=term, code="P1-N", period_number=1, time_profile=profile, student_count=30)
+        self.group = ClassGroup.objects.create(course=course, term=term, code="P1-N", period_number=1, time_profile=profile)
         subject = Subject.objects.create(institution=institution, code="BD", name="Banco de Dados", period_number=1,
                                          credits=3, onsite_weekly_hours=3, total_workload=60)
         self.teacher = Teacher.objects.create(institution=institution, code="P1", name="Ana")
@@ -51,12 +51,29 @@ class GenerationTests(TestCase):
         self.assertEqual(stale.status_code, 409)
 
     def test_preflight_reports_missing_compatible_room(self):
-        self.room.capacity = 20
-        self.room.save()
+        self.room.is_active = False
+        self.room.save(update_fields=["is_active"])
         response = self.client.get(f"/api/v1/schedules/{self.schedule.pk}/generation/preflight/")
         self.assertEqual(response.status_code, 200)
         self.assertFalse(response.data["ready"])
         self.assertIn("NO_COMPATIBLE_ROOM", {item["code"] for item in response.data["issues"]})
+
+    def test_student_count_is_not_required_or_used_to_restrict_rooms(self):
+        report = generation.preflight(self.schedule)
+        self.assertTrue(report["ready"], report)
+        self.assertNotIn("STUDENT_COUNT_UNKNOWN", {item["code"] for item in report["issues"]})
+        self.group.student_count = 40
+        self.group.save(update_fields=["student_count"])
+        self.room.capacity = 20
+        self.room.save(update_fields=["capacity"])
+        state, report, candidates = generation.solve(self.schedule, time_limit=4, alternatives=1)
+        self.assertTrue(report["ready"], report)
+        self.assertIn(state, {"FEASIBLE", "OPTIMAL"})
+        from academic.models import GenerationJob
+        job = GenerationJob.objects.create(schedule=self.schedule, requested_by=self.user,
+                                           base_revision=1, status=state)
+        candidate = GenerationCandidate.objects.create(job=job, **candidates[0])
+        self.assertEqual(generation.apply_candidate(candidate, 1, self.user), 2)
 
     def test_teacher_event_blocks_candidate(self):
         TeacherEvent.objects.create(teacher=self.teacher, term=self.schedule.term, title="Orientação",
@@ -77,7 +94,7 @@ class GenerationTests(TestCase):
             offer_subject(self.offering.subject, group, teacher)
         report = generation.preflight(self.schedule)
         self.assertFalse(report["ready"])
-        self.assertIn("ROOM_CAPACITY_SHORTAGE", {item["code"] for item in report["issues"]})
+        self.assertIn("ROOM_TIME_SHORTAGE", {item["code"] for item in report["issues"]})
 
     def test_removed_room_cannot_be_recreated_when_applying(self):
         state, _, proposals = generation.solve(self.schedule, time_limit=4, alternatives=1)
