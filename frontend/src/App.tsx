@@ -15,6 +15,8 @@ import {
   LayoutDashboard,
   LogOut,
   Menu,
+  PanelLeftClose,
+  PanelLeftOpen,
   Pencil,
   Plus,
   RefreshCw,
@@ -371,6 +373,7 @@ function displayResourceValue(row: RecordItem, key: string, data: Data) {
       institution: 'institutions',
       profile: 'time-profiles',
       time_profile: 'time-profiles',
+      assigned_teacher: 'teachers',
     } as Partial<Record<string, Resource>>
   )[key];
 
@@ -830,6 +833,10 @@ export default function App({
   const [loading, setLoading] = useState(true);
   const [modalTarget, setModalTarget] = useState<{ resource: Resource; item: RecordItem | null; defaults?: Record<string, string> } | null>(null);
   const [mobileNav, setMobileNav] = useState(false);
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(() => {
+    try { return window.localStorage.getItem('orbita-sidebar-collapsed') === 'true'; }
+    catch { return false; }
+  });
   const [gridRefresh, setGridRefresh] = useState(0);
   const [availabilityRefresh, setAvailabilityRefresh] = useState(0);
   const [settingShifts, setSettingShifts] = useState(false);
@@ -844,6 +851,7 @@ export default function App({
   const [catalogTab, setCatalogTab] = useState<Resource>('subjects');
   const [catalogSearch, setCatalogSearch] = useState('');
   const [offeringPeriod, setOfferingPeriod] = useState<number | null>(null);
+  const [offerPlannerOpen, setOfferPlannerOpen] = useState(false);
 
   const loadData = useCallback(async (quiet = false) => {
     if (!quiet) setLoading(true);
@@ -880,6 +888,11 @@ export default function App({
   useEffect(() => {
     void loadData();
   }, [loadData]);
+
+  useEffect(() => {
+    try { window.localStorage.setItem('orbita-sidebar-collapsed', String(sidebarCollapsed)); }
+    catch { /* Navegação continua funcionando sem armazenamento local. */ }
+  }, [sidebarCollapsed]);
 
   const institution = data.institutions[0];
 
@@ -961,15 +974,27 @@ export default function App({
   return (
     <div className="app-shell">
       {/* Sidebar Navigation */}
-      <aside className={`sidebar ${mobileNav ? 'open' : ''}`}>
-        <div className="brand">
-          <div className="brand-mark" aria-hidden="true">
-            <span />
+      <aside className={`sidebar ${sidebarCollapsed ? 'collapsed' : ''} ${mobileNav ? 'open' : ''}`}>
+        <div className="sidebar-header">
+          <div className="brand" title={sidebarCollapsed ? 'Órbita Acadêmico' : undefined}>
+            <div className="brand-mark" aria-hidden="true">
+              <span />
+            </div>
+            <div className="brand-name">
+              <strong>ÓRBITA</strong>
+              <small>ACADÊMICO</small>
+            </div>
           </div>
-          <div>
-            <strong>ÓRBITA</strong>
-            <small>ACADÊMICO</small>
-          </div>
+          <button
+            type="button"
+            className="sidebar-toggle"
+            onClick={() => setSidebarCollapsed((value) => !value)}
+            aria-label={sidebarCollapsed ? 'Expandir menu lateral' : 'Recolher menu lateral'}
+            aria-expanded={!sidebarCollapsed}
+            title={sidebarCollapsed ? 'Expandir menu lateral' : 'Recolher menu lateral'}
+          >
+            {sidebarCollapsed ? <PanelLeftOpen size={19} /> : <PanelLeftClose size={19} />}
+          </button>
         </div>
 
         <div className="sidebar-label">PLANEJAMENTO</div>
@@ -979,6 +1004,9 @@ export default function App({
               key={id}
               className={`nav-item ${section === id ? 'active' : ''}`}
               onClick={() => navigate(id)}
+              title={sidebarCollapsed ? title : undefined}
+              aria-label={sidebarCollapsed ? title : undefined}
+              aria-current={section === id ? 'page' : undefined}
             >
               <Icon size={19} strokeWidth={1.8} />
               <span>{title}</span>
@@ -986,7 +1014,7 @@ export default function App({
           ))}
         </nav>
 
-        <div className="sidebar-bottom">
+        <div className="sidebar-bottom" title={sidebarCollapsed ? String(institution?.name ?? 'Instituição de Ensino') : undefined}>
           <div className="institution-mark">
             <School size={18} />
           </div>
@@ -1241,8 +1269,8 @@ export default function App({
                   <div className="page-heading">
                     <div>
                       <span className="eyebrow">ESTRUTURA ACADÊMICA</span>
-                      <h1>Gestão de cadastros</h1>
-                      <p>Visualize, filtre e edite de forma clara e organizada os recursos essenciais do planejamento.</p>
+                      <h1>Cadastros</h1>
+                      <p>Consulte e atualize os dados usados na montagem das grades.</p>
                     </div>
                   </div>
 
@@ -1258,6 +1286,7 @@ export default function App({
                           onClick={() => {
                             setCatalogTab(id);
                             setCatalogSearch('');
+                            setOfferPlannerOpen(false);
                           }}
                         >
                           <Icon size={16} />
@@ -1285,7 +1314,7 @@ export default function App({
                         </p>
                       </div>
 
-                      <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
+                      <div className="catalog-toolbar-actions">
                         <div className="catalog-search-wrap">
                           <Search size={15} />
                           <input
@@ -1298,15 +1327,14 @@ export default function App({
                         </div>
 
                         {(['courses', 'subjects', 'teachers', 'rooms', 'class-groups', 'subject-offerings'] as Resource[]).includes(activeResource) && <button className="button" onClick={() => setImportKind(activeResource === 'subject-offerings' ? 'offerings' : activeResource as ImportKind)}><FileUp size={16} />Importar em lote</button>}
+                        {activeResource === 'subject-offerings' && <button className="button" type="button" aria-controls="catalog-offer-planner" aria-expanded={offerPlannerOpen} onClick={() => setOfferPlannerOpen((open) => !open)}><Users size={16} />{offerPlannerOpen ? 'Fechar alocação em lote' : 'Alocar professores em lote'}</button>}
                         <button className="button primary" onClick={() => activeResource === 'subject-offerings' ? setOfferTarget({}) : openCreateModal(activeResource)}><Plus size={16} />{activeResource === 'subject-offerings' ? 'Ofertar disciplina' : resourceAddLabels[activeResource]}</button>
                       </div>
                     </div>
 
-                    {catalogTab === 'subject-offerings' && <div className="catalog-hint-banner">Cada turma recebe uma única oferta por disciplina. As horas presenciais semanais são definidas na disciplina; os blocos da grade são preparados na primeira oferta.</div>}
-
                     {catalogTab === 'subject-offerings' && <div className="offering-period-filter" role="group" aria-label="Filtrar ofertas por período curricular"><span>Período</span><button type="button" className={offeringPeriod === null ? 'active' : ''} aria-pressed={offeringPeriod === null} onClick={() => setOfferingPeriod(null)}>Todos</button>{offeringPeriods.map((period) => <button type="button" key={period} className={offeringPeriod === period ? 'active' : ''} aria-pressed={offeringPeriod === period} onClick={() => setOfferingPeriod(period)}>{period}º</button>)}</div>}
 
-                    {catalogTab === 'subject-offerings' && <OfferPlanner data={data} periodFilter={offeringPeriod} onSaved={async (message) => { setNotice(message); await loadData(true); }} onOpenGrid={(id) => { setPreferredScheduleId(id); setGridRefresh((value) => value + 1); navigate('grid'); }} />}
+                    {catalogTab === 'subject-offerings' && offerPlannerOpen && <div id="catalog-offer-planner"><OfferPlanner data={data} periodFilter={offeringPeriod} onSaved={async (message) => { setNotice(message); await loadData(true); }} onOpenGrid={(id) => { setPreferredScheduleId(id); setGridRefresh((value) => value + 1); navigate('grid'); }} /></div>}
 
                     {/* Table View */}
                     <div className="table-wrap catalog-table-wrap">
@@ -1367,7 +1395,7 @@ export default function App({
                         <div className="empty-list" style={{ padding: '60px 24px' }}>
                           {catalogSearch
                             ? `Nenhum registro encontrado para "${catalogSearch}".`
-                            : `Nenhum(a) ${resourceNames[activeResource].toLowerCase()} cadastrado(a) ainda. Clique em "Novo ${resourceNames[activeResource]}" acima para começar.`}
+                            : `Nenhum registro de ${resourcePluralNames[activeResource].toLowerCase()} ainda. Use “${activeResource === 'subject-offerings' ? 'Ofertar disciplina' : resourceAddLabels[activeResource]}” para começar.`}
                         </div>
                       )}
                     </div>
