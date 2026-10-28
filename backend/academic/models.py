@@ -69,6 +69,11 @@ class Subject(ActiveModel):
         CLASS_HOUR = "CLASS_HOUR", "Hora-aula"
         CLOCK_HOUR = "CLOCK_HOUR", "Hora-relógio"
 
+    class RoomType(models.TextChoices):
+        CLASSROOM = "CLASSROOM", "Sala de Aula"
+        LABORATORY = "LABORATORY", "Laboratório"
+        METALAB = "METALAB", "Metalab"
+
     institution = models.ForeignKey(Institution, on_delete=models.PROTECT)
     code = models.CharField(max_length=30)
     name = models.CharField(max_length=200)
@@ -79,6 +84,7 @@ class Subject(ActiveModel):
     onsite_weekly_hours = models.PositiveSmallIntegerField(null=True, blank=True)
     ead_weekly_hours = models.PositiveSmallIntegerField(default=0)
     period_number = models.PositiveSmallIntegerField(null=True, blank=True, validators=[MinValueValidator(1)])
+    required_room_type = models.CharField(max_length=12, choices=RoomType.choices, default=RoomType.CLASSROOM)
     required_features = models.ManyToManyField("RoomFeature", blank=True)
 
     class Meta:
@@ -157,11 +163,17 @@ class RoomFeature(ActiveModel):
 
 
 class Room(ActiveModel):
+    class Type(models.TextChoices):
+        CLASSROOM = "CLASSROOM", "Sala de Aula"
+        LABORATORY = "LABORATORY", "Laboratório"
+        METALAB = "METALAB", "Metalab"
+
     institution = models.ForeignKey(Institution, on_delete=models.PROTECT)
     code = models.CharField(max_length=30)
     name = models.CharField(max_length=120)
     capacity = models.PositiveIntegerField(null=True, blank=True)
     location = models.CharField(max_length=120, blank=True)
+    room_type = models.CharField(max_length=12, choices=Type.choices, default=Type.CLASSROOM)
     features = models.ManyToManyField(RoomFeature, blank=True)
 
     class Meta:

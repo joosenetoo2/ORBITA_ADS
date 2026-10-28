@@ -59,6 +59,17 @@ class AllocationValidationTests(TestCase):
         item = self.session(1, time(18), time(19, 40))
         self.assertIn("TIME_BLOCK", {conflict["code"] for conflict in validate_session(item)})
 
+    def test_room_environment_must_match_subject_requirement(self):
+        self.subject.required_room_type = Subject.RoomType.LABORATORY
+        self.subject.save(update_fields=["required_room_type"])
+        item = self.session(1, time(18), time(19, 40))
+        conflicts = validate_session(item)
+        self.assertIn("ROOM_TYPE_MISMATCH", {conflict["code"] for conflict in conflicts})
+        self.assertIn("Laboratório", next(conflict["message"] for conflict in conflicts if conflict["code"] == "ROOM_TYPE_MISMATCH"))
+        self.room.room_type = Room.Type.LABORATORY
+        self.room.save(update_fields=["room_type"])
+        self.assertNotIn("ROOM_TYPE_MISMATCH", {conflict["code"] for conflict in validate_session(item)})
+
     def test_specific_teacher_window_restricts_global_window(self):
         TimeWindow.objects.create(institution=self.institution, weekday=1, starts_at=time(20), ends_at=time(22), scope=Scope.TEACHER, scope_id=self.teacher.pk)
         item = self.session(1, time(18), time(19, 40))

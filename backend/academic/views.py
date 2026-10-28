@@ -16,7 +16,7 @@ from rest_framework.permissions import AllowAny
 from . import generation, models, serializers
 from .permissions import AcademicPermission
 from .scheduling import candidate_starts, validate_session, validate_teacher_event
-from .quick_grid import GridConflict, delete_cell, make_code, parse_time, reconcile, save_cell
+from .quick_grid import GridConflict, delete_cell, make_code, normalize_text_key, parse_time, reconcile, save_cell
 from .catalog_flow import offer_subject
 from .workload import teacher_summary
 
@@ -109,7 +109,33 @@ class InstitutionViewSet(AcademicViewSet):
 
 AcademicTermViewSet = viewset_for(models.AcademicTerm, serializers.AcademicTermSerializer)
 CourseViewSet = viewset_for(models.Course, serializers.CourseSerializer)
-class SubjectViewSet(AcademicViewSet):
+
+
+class SafeRoomEnvironmentUpdateMixin:
+    def partial_update(self, request, *args, **kwargs):
+        instance = self.get_object()
+        field = "required_room_type" if isinstance(instance, models.Subject) else "room_type"
+        previous = getattr(instance, field)
+        with transaction.atomic():
+            response = super().partial_update(request, *args, **kwargs)
+            instance.refresh_from_db(fields=[field])
+            if getattr(instance, field) == previous:
+                return response
+            if isinstance(instance, models.Subject):
+                sessions = models.ScheduledSession.objects.filter(requirement__offering__subject=instance).select_related("room")
+                invalid = [session.pk for session in sessions if session.room.room_type != instance.required_room_type]
+            else:
+                sessions = models.ScheduledSession.objects.filter(room=instance).select_related("requirement__offering__subject")
+                invalid = [session.pk for session in sessions if session.requirement.offering.subject.required_room_type != instance.room_type]
+            if invalid:
+                transaction.set_rollback(True)
+                return Response({"code": "ROOM_TYPE_AFFECTS_SESSIONS",
+                                 "message": "A alteração tornaria aulas já alocadas incompatíveis com o ambiente. Realoque essas aulas antes de mudar o tipo.",
+                                 "affected_session_ids": invalid}, status=status.HTTP_409_CONFLICT)
+            return response
+
+
+class SubjectViewSet(SafeRoomEnvironmentUpdateMixin, AcademicViewSet):
     queryset = models.Subject.objects.all().order_by("pk")
     serializer_class = serializers.SubjectSerializer
 
@@ -126,7 +152,9 @@ CurriculumViewSet = viewset_for(models.Curriculum, serializers.CurriculumSeriali
 CurriculumPeriodViewSet = viewset_for(models.CurriculumPeriod, serializers.CurriculumPeriodSerializer)
 TeacherViewSet = viewset_for(models.Teacher, serializers.TeacherSerializer)
 RoomFeatureViewSet = viewset_for(models.RoomFeature, serializers.RoomFeatureSerializer)
-RoomViewSet = viewset_for(models.Room, serializers.RoomSerializer)
+class RoomViewSet(SafeRoomEnvironmentUpdateMixin, AcademicViewSet):
+    queryset = models.Room.objects.all().order_by("pk")
+    serializer_class = serializers.RoomSerializer
 ClassGroupViewSet = viewset_for(models.ClassGroup, serializers.ClassGroupSerializer)
 class SubjectOfferingViewSet(AcademicViewSet):
     queryset = models.SubjectOffering.objects.all().order_by("pk")
@@ -159,6 +187,16 @@ SessionRequirementViewSet = viewset_for(models.SessionRequirement, serializers.S
 
 class BatchImportView(APIView):
     permission_classes = [AcademicPermission]
+
+    @staticmethod
+    def _room_type(value, field):
+        normalized = normalize_text_key(value or "CLASSROOM")
+        choices = {"classroom": "CLASSROOM", "sala de aula": "CLASSROOM", "sala": "CLASSROOM",
+                   "laboratory": "LABORATORY", "laboratorio": "LABORATORY", "lab": "LABORATORY",
+                   "metalab": "METALAB", "meta lab": "METALAB"}
+        if normalized not in choices:
+            raise ValidationError({field: "Use Sala de Aula (CLASSROOM), Laboratório (LABORATORY) ou Metalab (METALAB)."})
+        return choices[normalized]
 
     @staticmethod
     def _integer(value, label, *, minimum=0, maximum=None):
@@ -214,9 +252,11 @@ class BatchImportView(APIView):
                             raise ValidationError({"ead_weekly_hours": "Este CSV usa percentual EAD. Substitua a coluna por horas_ead e informe horas semanais."})
                         ead = self._integer(row.get("ead_weekly_hours", 0) or 0, "ead_weekly_hours", maximum=credits)
                         period_number = self._integer(row.get("period_number"), "period_number", minimum=1, maximum=20)
+                        room_type = self._room_type(row.get("required_room_type"), "required_room_type")
                         obj = models.Subject(institution=institution, code=code, name=name, credits=credits,
                                              onsite_weekly_hours=onsite, ead_weekly_hours=ead, period_number=period_number,
-                                             total_workload=credits * 20, workload_unit=models.Subject.Unit.CLASS_HOUR)
+                                             total_workload=credits * 20, workload_unit=models.Subject.Unit.CLASS_HOUR,
+                                             required_room_type=room_type)
                     elif resource == "teachers":
                         if models.Teacher.objects.filter(institution=institution, code__iexact=code).exists():
                             skipped += 1; continue
@@ -226,8 +266,10 @@ class BatchImportView(APIView):
                         if models.Room.objects.filter(institution=institution, code__iexact=code).exists():
                             skipped += 1; continue
                         capacity = row.get("capacity")
+                        room_type = self._room_type(row.get("room_type"), "room_type")
                         obj = models.Room(institution=institution, code=code, name=name,
-                                          capacity=self._integer(capacity, "capacity") if capacity not in (None, "") else None)
+                                          capacity=self._integer(capacity, "capacity") if capacity not in (None, "") else None,
+                                          room_type=room_type)
                     elif resource == "class-groups":
                         if models.ClassGroup.objects.filter(term=group_term, code__iexact=code).exists():
                             skipped += 1; continue
@@ -824,6 +866,7 @@ class ScheduleViewSet(AcademicViewSet):
             "groups": [{"id": group.pk, "code": group.code, "name": group.name, "period_number": group.period_number} for group in groups],
             "offerings": [{"id": offer.pk, "group_id": offer.group_id, "subject": offer.subject.name,
                            "onsite_weekly_hours": offer.subject.onsite_weekly_hours,
+                           "required_room_type": offer.subject.required_room_type,
                            "teachers": [{"id": teacher.pk, "name": teacher.name, "color": teacher.color} for teacher in offer.eligible_teachers.all()],
                            "blocks": self._grid_blocks(offer)}
                           for offer in offerings],

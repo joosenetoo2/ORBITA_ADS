@@ -3,6 +3,7 @@ import { CalendarDays, CircleAlert, ClipboardCheck, Pencil, Plus, Trash2, X } fr
 import { ApiError, api, create, listAll, type Conflict, type RecordItem } from './api';
 import type { Data } from './App';
 import ValidationIssues from './ValidationIssues';
+import { roomTypeLabel } from './roomTypes';
 import './schedule.css';
 
 type Schedule = RecordItem & { course: number; term: number; time_profile: number; time_profile_name: string; revision: number; published_version: number | null };
@@ -75,6 +76,9 @@ export default function ScheduleEditor({ data }: { data: Data }) {
   const requirements = data['session-requirements'].filter((requirement) => offeringIds.has(Number(requirement.offering)));
   const chosenRequirement = requirements.find((requirement) => requirement.id === Number(form.requirement));
   const chosenOffering = offerings.find((offering) => offering.id === Number(chosenRequirement?.offering));
+  const chosenSubject = data.subjects.find((subject) => subject.id === Number(chosenOffering?.subject));
+  const chosenRoom = data.rooms.find((room) => room.id === Number(form.room));
+  const roomMismatch = Boolean(chosenSubject && chosenRoom && chosenSubject.required_room_type !== chosenRoom.room_type);
   const eligible = Array.isArray(chosenOffering?.eligible_teachers) ? chosenOffering.eligible_teachers.map(Number) : [];
   const eligibleTeachers = data.teachers.filter((teacher) => eligible.includes(teacher.id));
   const duration = Number(chosenRequirement?.duration_minutes ?? 0);
@@ -202,8 +206,9 @@ export default function ScheduleEditor({ data }: { data: Data }) {
       <label className="form-field">Início<input required type="time" value={form.starts_at} onChange={(event) => updateForm({ starts_at: event.target.value })} /></label>
       <label className="form-field">Fim calculado<input readOnly value={end} aria-label="Fim calculado" /></label>
       <label className="form-field">Professor<select required value={form.teacher} onChange={(event) => updateForm({ teacher: event.target.value })}><option value="">Selecione</option>{eligibleTeachers.map((item) => <option key={item.id} value={item.id}>{String(item.name)}</option>)}</select></label>
-      <label className="form-field">Sala<select required value={form.room} onChange={(event) => updateForm({ room: event.target.value })}><option value="">Selecione</option>{data.rooms.map((item) => <option key={item.id} value={item.id}>{String(item.name)}</option>)}</select></label>
+      <label className="form-field">Sala{chosenSubject ? ` · exige ${roomTypeLabel(chosenSubject.required_room_type)}` : ''}<select required value={form.room} onChange={(event) => updateForm({ room: event.target.value })}><option value="">Selecione</option>{data.rooms.map((item) => <option key={item.id} value={item.id}>{String(item.name)} · {roomTypeLabel(item.room_type)}</option>)}</select></label>
+      {roomMismatch && <p className="form-error room-type-warning" role="alert"><CircleAlert size={16} />Esta disciplina exige {roomTypeLabel(chosenSubject?.required_room_type)}. A sala escolhida é {roomTypeLabel(chosenRoom?.room_type)}.</p>}
       <label className="check-field"><input type="checkbox" checked={form.is_locked} onChange={(event) => updateForm({ is_locked: event.target.checked })} />Preservar em futuras gerações</label>
-      </div>{error && <p className="form-error" role="alert">{error}</p>}{preview && <div className={`notice ${preview.valid ? 'success' : 'error'}`} role="status">{preview.valid ? 'Prévia válida. Confirme para salvar a mudança.' : 'A prévia identificou conflitos. Ajuste os campos antes de confirmar.'}</div>}{preview && !preview.valid && <div className="conflict-list">{preview.conflicts.map((item, index) => <p key={`${item.code}-${index}`}>{item.message}</p>)}</div>}{!!conflicts.length && <div className="conflict-list">{conflicts.map((item, index) => <p key={`${item.code}-${index}`}>{item.message}</p>)}</div>}<div className="modal-actions">{editing !== 'new' && <button className="button danger" type="button" disabled={busy} onClick={() => void deleteSession(editing)}><Trash2 size={16} />Remover</button>}<button className="button ghost" type="button" onClick={() => setEditing(null)}>Cancelar</button><button className="button" type="button" disabled={busy || !end} onClick={() => void runPreview()}>Verificar</button><button className="button primary" type="submit" disabled={busy || !end}><Pencil size={16} />{busy ? 'Salvando…' : 'Salvar alocação'}</button></div></form></section></div>}
+      </div>{error && <p className="form-error" role="alert">{error}</p>}{preview && <div className={`notice ${preview.valid ? 'success' : 'error'}`} role="status">{preview.valid ? 'Prévia válida. Confirme para salvar a mudança.' : 'A prévia identificou conflitos. Ajuste os campos antes de confirmar.'}</div>}{preview && !preview.valid && <div className="conflict-list">{preview.conflicts.map((item, index) => <p key={`${item.code}-${index}`}>{item.message}</p>)}</div>}{!!conflicts.length && <div className="conflict-list">{conflicts.map((item, index) => <p key={`${item.code}-${index}`}>{item.message}</p>)}</div>}<div className="modal-actions">{editing !== 'new' && <button className="button danger" type="button" disabled={busy} onClick={() => void deleteSession(editing)}><Trash2 size={16} />Remover</button>}<button className="button ghost" type="button" onClick={() => setEditing(null)}>Cancelar</button><button className="button" type="button" disabled={busy || !end} onClick={() => void runPreview()}>Verificar</button><button className="button primary" type="submit" disabled={busy || !end || roomMismatch}><Pencil size={16} />{busy ? 'Salvando…' : 'Salvar alocação'}</button></div></form></section></div>}
   </>;
 }

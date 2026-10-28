@@ -34,6 +34,7 @@ import TeacherAvailability from './TeacherAvailability';
 import OfferPlanner from './OfferPlanner';
 import type { AuthUser } from './AuthGate';
 import { matchesSearch } from './textUtils';
+import { roomTypeLabel, roomTypeOptions } from './roomTypes';
 import { ImportModal, OfferModal, type ImportKind } from './CatalogActions';
 
 type Section = 'grid' | 'overview' | 'catalog' | 'import' | 'time' | 'availability' | 'schedules';
@@ -133,6 +134,8 @@ const labels: Record<string, string> = {
   weekly_hours: 'Horas presenciais/semana',
   max_weekly_minutes: 'Limite semanal (minutos)',
   capacity: 'Capacidade',
+  room_type: 'Tipo de ambiente',
+  required_room_type: 'Ambiente necessário',
   location: 'Localização',
   course: 'Curso',
   term: 'Período letivo',
@@ -208,7 +211,8 @@ const fieldsets: Record<Resource, Field[]> = {
     { key: 'period_number', options: Array.from({ length: 10 }, (_, index) => [String(index + 1), `${index + 1}º período`]), required: true },
     { key: 'credits', type: 'number', required: true },
     { key: 'onsite_weekly_hours', type: 'number', required: true },
-    { key: 'ead_weekly_hours', type: 'number', required: true }
+    { key: 'ead_weekly_hours', type: 'number', required: true },
+    { key: 'required_room_type', options: roomTypeOptions, required: true }
   ],
   teachers: [
     { key: 'institution', source: 'institutions', required: true },
@@ -220,6 +224,7 @@ const fieldsets: Record<Resource, Field[]> = {
     { key: 'institution', source: 'institutions', required: true },
     { key: 'code', required: true },
     { key: 'name', required: true },
+    { key: 'room_type', options: roomTypeOptions, required: true },
     { key: 'capacity', type: 'number' },
     { key: 'location' }
   ],
@@ -299,7 +304,7 @@ function getResourceColumns(resource: Resource): string[] {
   return resource === 'academic-terms'
     ? ['name', 'starts_on', 'ends_on']
     : resource === 'rooms'
-    ? ['code', 'name', 'capacity', 'location']
+    ? ['code', 'name', 'room_type', 'capacity', 'location']
     : resource === 'time-windows'
     ? ['weekday', 'starts_at', 'ends_at']
     : resource === 'time-blocks'
@@ -315,7 +320,7 @@ function getResourceColumns(resource: Resource): string[] {
     : resource === 'courses'
     ? ['code', 'name', 'modality']
     : resource === 'subjects'
-    ? ['code', 'name', 'period_number', 'credits', 'total_workload', 'onsite_weekly_hours', 'ead_weekly_hours']
+    ? ['code', 'name', 'period_number', 'credits', 'total_workload', 'onsite_weekly_hours', 'ead_weekly_hours', 'required_room_type']
     : resource === 'teachers'
     ? ['code', 'name', 'color']
     : resource === 'class-groups'
@@ -324,6 +329,7 @@ function getResourceColumns(resource: Resource): string[] {
 }
 
 function displayResourceValue(row: RecordItem, key: string, data: Data) {
+  if (key === 'room_type' || key === 'required_room_type') return roomTypeLabel(row[key]);
   if (key === 'color') {
     const hex = String(row[key] || '').trim();
     if (!hex) {
@@ -664,7 +670,7 @@ function Modal({
           </div>
           {resource === 'class-groups' && <datalist id="group-name-options">{Array.from({ length: 10 }, (_, index) => index + 1).flatMap((period) => ['A', 'B', 'C', 'D'].map((letter) => <option key={`${period}-${letter}`} value={`${period}º ${letter}`} />))}</datalist>}
           {resource === 'class-groups' && !data['time-profiles'].some((profile) => profile.is_active) && <p className="catalog-hint">Ative Manhã e Noite em Regras de horário antes de cadastrar turmas.</p>}
-          {resource === 'subjects' && <p className="catalog-hint">Cada crédito corresponde a 1 hora-aula semanal de 60 minutos e a 20 horas-aula totais. Exemplo: 4 créditos = 3 horas presenciais + 1 hora EAD por semana. Apenas as horas presenciais entram na grade.</p>}
+          {resource === 'subjects' && <p className="catalog-hint">Cada crédito corresponde a 1 hora-aula semanal de 60 minutos e a 20 horas-aula totais. Exemplo: 4 créditos = 3 horas presenciais + 1 hora EAD por semana. Apenas as horas presenciais entram na grade. O ambiente necessário limita as salas que podem receber a disciplina.</p>}
 
           {error && (
             <p className="form-error" role="alert">
@@ -923,10 +929,10 @@ export default function App({
 
   const catalogTabs = useMemo(
     () => [
-      { id: 'subjects' as Resource, label: 'Disciplinas', icon: BookOpen, count: data.subjects.length, description: 'Matriz curricular, cargas horárias e disciplinas' },
+      { id: 'subjects' as Resource, label: 'Disciplinas', icon: BookOpen, count: data.subjects.length, description: 'Matriz curricular, cargas horárias e ambiente necessário' },
       { id: 'class-groups' as Resource, label: 'Turmas', icon: Users, count: data['class-groups'].length, description: 'Turmas vinculadas a cursos e períodos letivos' },
       { id: 'teachers' as Resource, label: 'Professores', icon: GraduationCap, count: data.teachers.length, description: 'Docentes disponíveis para as ofertas de disciplinas' },
-      { id: 'rooms' as Resource, label: 'Salas', icon: DoorOpen, count: data.rooms.length, description: 'Salas de aula, laboratórios e capacidade de ocupação' },
+      { id: 'rooms' as Resource, label: 'Salas', icon: DoorOpen, count: data.rooms.length, description: 'Tipo de ambiente, localização e capacidade das salas' },
       { id: 'academic-terms' as Resource, label: 'Períodos Letivos', icon: Calendar, count: data['academic-terms'].length, description: 'Semestres acadêmicos e intervalos de vigência' },
       { id: 'courses' as Resource, label: 'Cursos', icon: School, count: data.courses.length, description: 'Cursos de graduação e tecnologia da instituição' },
       { id: 'subject-offerings' as Resource, label: 'Ofertas de Disciplinas', icon: Layers, count: data['subject-offerings'].length, description: 'Vínculo das disciplinas ofertadas a turmas e docentes' },
@@ -1403,7 +1409,7 @@ export default function App({
                 </>
               )}
 
-              {section === 'import' && <><div className="page-heading"><div><span className="eyebrow">CADASTRO RÁPIDO</span><h1>Importar em lote</h1><p>Cole linhas da planilha ou carregue CSV/TSV. Baixe um modelo para cada tipo de cadastro.</p></div></div><div className="import-grid">{([['courses', 'Cursos', 'Códigos, nomes e modalidades'], ['subjects', 'Disciplinas', 'Créditos, horas presenciais e horas EAD semanais'], ['teachers', 'Professores', 'Códigos e nomes, sem limite semanal'], ['rooms', 'Salas', 'Códigos, nomes e capacidade'], ['class-groups', 'Turmas', 'Códigos e nomes vinculados ao curso e período'], ['offerings', 'Ofertas', 'Turma, disciplina, professor e horas por bloco']] as [ImportKind, string, string][]).map(([kind, title, description]) => <section className="panel import-card" key={kind}><FileUp size={22} /><h3>{title}</h3><p>{description}</p><button className="button primary" onClick={() => setImportKind(kind)}>Importar {title.toLowerCase()}</button></section>)}</div></>}
+              {section === 'import' && <><div className="page-heading"><div><span className="eyebrow">CADASTRO RÁPIDO</span><h1>Importar em lote</h1><p>Cole linhas da planilha ou carregue CSV/TSV. Baixe um modelo para cada tipo de cadastro.</p></div></div><div className="import-grid">{([['courses', 'Cursos', 'Códigos, nomes e modalidades'], ['subjects', 'Disciplinas', 'Créditos, horas presenciais, horas EAD e ambiente necessário'], ['teachers', 'Professores', 'Códigos e nomes, sem limite semanal'], ['rooms', 'Salas', 'Códigos, nomes, tipo de ambiente e capacidade'], ['class-groups', 'Turmas', 'Códigos e nomes vinculados ao curso e período'], ['offerings', 'Ofertas', 'Turma, disciplina, professor e horas por bloco']] as [ImportKind, string, string][]).map(([kind, title, description]) => <section className="panel import-card" key={kind}><FileUp size={22} /><h3>{title}</h3><p>{description}</p><button className="button primary" onClick={() => setImportKind(kind)}>Importar {title.toLowerCase()}</button></section>)}</div></>}
 
               {section === 'time' && (
                 <>

@@ -1004,7 +1004,7 @@ a:hover {
 
 .catalog-table {
   table-layout: fixed;
-  min-width: 780px;
+  min-width: 960px;
 }
 
 .catalog-table th,
@@ -1021,7 +1021,7 @@ a:hover {
 }
 
 .catalog-table .row-actions-cell {
-  width: 210px;
+  width: 244px;
   text-align: left;
   white-space: nowrap;
   overflow-wrap: normal;
@@ -1032,13 +1032,34 @@ a:hover {
   margin-inline: 0;
 }
 
-.catalog-table--subjects th:nth-child(1) { width: 9%; }
-.catalog-table--subjects th:nth-child(2) { width: 25%; }
-.catalog-table--subjects th:nth-child(3) { width: 8%; }
-.catalog-table--subjects th:nth-child(4) { width: 11%; }
-.catalog-table--subjects th:nth-child(5) { width: 14%; }
-.catalog-table--subjects th:nth-child(6) { width: 11%; }
-.catalog-table--subjects th:nth-child(7) { width: 210px; }
+.catalog-table--subjects th:nth-child(1) { width: 8%; }
+.catalog-table--subjects th:nth-child(2) { width: 21%; }
+.catalog-table--subjects th:nth-child(3) { width: 7%; }
+.catalog-table--subjects th:nth-child(4) { width: 7%; }
+.catalog-table--subjects th:nth-child(5) { width: 9%; }
+.catalog-table--subjects th:nth-child(6) { width: 8%; }
+.catalog-table--subjects th:nth-child(7) { width: 8%; }
+.catalog-table--subjects th:nth-child(8) { width: 8%; }
+
+.room-type-warning {
+  grid-column: 1 / -1;
+  margin: 0;
+}
+
+.catalog-table .row-actions-cell,
+.list-panel .row-actions-cell {
+  position: sticky;
+  right: 0;
+  z-index: 2;
+  background: var(--color-surface);
+  box-shadow: -1px 0 0 var(--color-border-subtle);
+}
+
+.catalog-table thead .row-actions-cell,
+.list-panel thead .row-actions-cell {
+  z-index: 3;
+  background: var(--color-bg);
+}
 
 @container (max-width: 680px) {
   .catalog-table {
@@ -1103,6 +1124,8 @@ a:hover {
     width: 100%;
     padding-top: 8px;
     border-top: 1px solid var(--color-border-subtle);
+    position: static;
+    box-shadow: none;
   }
 
   .catalog-table .row-actions-cell::before {
@@ -1138,6 +1161,7 @@ a:hover {
 
 .row-actions-cell {
   width: 1%;
+  min-width: 170px;
   padding: 6px 12px;
   text-align: right;
   white-space: nowrap;

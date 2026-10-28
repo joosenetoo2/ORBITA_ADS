@@ -127,7 +127,7 @@ def _context(schedule, mode):
     slots = list(schedule.slots.order_by("display_order", "starts_at"))
     fixed = []
     preserved = defaultdict(list)
-    for session in models.ScheduledSession.objects.filter(schedule__term=schedule.term).select_related("requirement__offering"):
+    for session in models.ScheduledSession.objects.filter(schedule__term=schedule.term).select_related("requirement__offering", "room"):
         movable = session.schedule_id == schedule.pk and mode == "REARRANGE" and not session.is_locked
         if movable:
             continue
@@ -232,6 +232,11 @@ def prepare(schedule, mode="FILL", *, flexible=False):
                "subject_name": offering.subject.name, "required_minutes": required,
                "preserved_minutes": existing, "pending_minutes": max(0, remaining)}
         summaries.append(row)
+        incompatible_preserved = [session.pk for session in context["preserved"][offering.pk]
+                                  if session.room.room_type != offering.subject.required_room_type]
+        if incompatible_preserved:
+            issues.append(issue("ROOM_TYPE_MISMATCH", f"Aulas já alocadas usam sala incompatível. Esta disciplina exige {offering.subject.get_required_room_type_display()}.", offering=offering,
+                                details={"session_ids": incompatible_preserved, "required_room_type": offering.subject.required_room_type}))
         if remaining < 0:
             issues.append(issue("OVER_ALLOCATED", "A oferta já possui mais horas presenciais do que o previsto.", offering=offering,
                                 details={"excess_minutes": -remaining}))
@@ -244,10 +249,11 @@ def prepare(schedule, mode="FILL", *, flexible=False):
             continue
         required_features = {feature.pk for feature in offering.required_features.all()} | {feature.pk for feature in offering.subject.required_features.all()}
         compatible = [room for room in context["rooms"]
-                      if required_features.issubset({feature.pk for feature in room.features.all()})]
+                      if room.room_type == offering.subject.required_room_type
+                      and required_features.issubset({feature.pk for feature in room.features.all()})]
         if not compatible:
-            issues.append(issue("NO_COMPATIBLE_ROOM", "Não há sala ativa com os recursos exigidos pela disciplina.", offering=offering,
-                                details={"required_feature_ids": sorted(required_features)}))
+            issues.append(issue("NO_COMPATIBLE_ROOM", f"Não há {offering.subject.get_required_room_type_display()} ativa com os recursos exigidos pela disciplina.", offering=offering,
+                                details={"required_room_type": offering.subject.required_room_type, "required_feature_ids": sorted(required_features)}))
             continue
         durations = _partitions(offering, remaining, flexible)
         if remaining % 60:

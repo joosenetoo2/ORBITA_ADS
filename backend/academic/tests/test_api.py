@@ -38,6 +38,19 @@ class ScheduleApiTests(TestCase):
             "teacher": self.teacher.pk, "room": self.room.pk,
         }
 
+    def test_room_and_subject_environment_types_are_saved(self):
+        room = self.client.post("/api/v1/rooms/", {
+            "institution": self.institution.pk, "code": "META1", "name": "Metalab 1", "room_type": "METALAB",
+        }, format="json")
+        self.assertEqual(room.status_code, 201, room.data)
+        self.assertEqual(room.data["room_type"], "METALAB")
+        subject = self.client.post("/api/v1/subjects/", {
+            "institution": self.institution.pk, "code": "PROG", "name": "Programação", "period_number": 1,
+            "credits": 4, "onsite_weekly_hours": 4, "required_room_type": "LABORATORY",
+        }, format="json")
+        self.assertEqual(subject.status_code, 201, subject.data)
+        self.assertEqual(subject.data["required_room_type"], "LABORATORY")
+
     def test_existing_schedule_can_gain_grid_rows_without_recreating_groups(self):
         response = self.client.post(f"/api/v1/schedules/{self.schedule.pk}/configure-grid/", {
             "slots": [{"start": "18:00", "end": "19:00"}, {"start": "19:00", "end": "20:00"}],

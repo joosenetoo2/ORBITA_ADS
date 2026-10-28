@@ -58,6 +58,52 @@ class GenerationTests(TestCase):
         self.assertFalse(response.data["ready"])
         self.assertIn("NO_COMPATIBLE_ROOM", {item["code"] for item in response.data["issues"]})
 
+    def test_generator_uses_only_required_room_environment(self):
+        subject = self.offering.subject
+        subject.required_room_type = Subject.RoomType.LABORATORY
+        subject.save(update_fields=["required_room_type"])
+        report = generation.preflight(self.schedule)
+        self.assertIn("NO_COMPATIBLE_ROOM", {item["code"] for item in report["issues"]})
+        lab = Room.objects.create(institution=self.room.institution, code="LAB1", name="Laboratório 1", room_type=Room.Type.LABORATORY)
+        state, report, candidates = generation.solve(self.schedule, time_limit=4, alternatives=1)
+        self.assertTrue(report["ready"], report)
+        self.assertIn(state, {"FEASIBLE", "OPTIMAL"})
+        self.assertTrue(candidates)
+        self.assertEqual({item["room_id"] for item in candidates[0]["allocations"]}, {lab.pk})
+
+    def test_manual_grid_rejects_incompatible_room(self):
+        subject = self.offering.subject
+        subject.required_room_type = Subject.RoomType.LABORATORY
+        subject.save(update_fields=["required_room_type"])
+        lab = Room.objects.create(institution=self.room.institution, code="LAB1", name="Laboratório 1", room_type=Room.Type.LABORATORY)
+        payload = {"group_id": self.group.pk, "weekday": 1, "slot_id": self.schedule.slots.first().pk,
+                   "span": 1, "subject": subject.name, "teacher": self.teacher.name, "room": self.room.name}
+        invalid = self.client.post(f"/api/v1/schedules/{self.schedule.pk}/quick-cells/", payload,
+                                   format="json", HTTP_IF_MATCH="1")
+        self.assertEqual(invalid.status_code, 409, invalid.data)
+        self.assertIn("ROOM_TYPE_MISMATCH", {item["code"] for item in invalid.data["conflicts"]})
+        self.assertEqual(ScheduledSession.objects.count(), 0)
+        payload["room"] = lab.name
+        valid = self.client.post(f"/api/v1/schedules/{self.schedule.pk}/quick-cells/", payload,
+                                 format="json", HTTP_IF_MATCH="1")
+        self.assertIn(valid.status_code, {200, 201}, valid.data)
+
+    def test_changing_room_environment_cannot_invalidate_existing_lesson(self):
+        payload = {"group_id": self.group.pk, "weekday": 1, "slot_id": self.schedule.slots.first().pk,
+                   "span": 1, "subject": self.offering.subject.name, "teacher": self.teacher.name, "room": self.room.name}
+        created = self.client.post(f"/api/v1/schedules/{self.schedule.pk}/quick-cells/", payload,
+                                   format="json", HTTP_IF_MATCH="1")
+        self.assertIn(created.status_code, {200, 201}, created.data)
+        changed = self.client.patch(f"/api/v1/rooms/{self.room.pk}/", {"room_type": "LABORATORY"}, format="json")
+        self.assertEqual(changed.status_code, 409, changed.data)
+        self.room.refresh_from_db()
+        self.assertEqual(self.room.room_type, Room.Type.CLASSROOM)
+        subject_changed = self.client.patch(f"/api/v1/subjects/{self.offering.subject_id}/",
+                                            {"required_room_type": "LABORATORY"}, format="json")
+        self.assertEqual(subject_changed.status_code, 409, subject_changed.data)
+        self.offering.subject.refresh_from_db()
+        self.assertEqual(self.offering.subject.required_room_type, Subject.RoomType.CLASSROOM)
+
     def test_student_count_is_not_required_or_used_to_restrict_rooms(self):
         report = generation.preflight(self.schedule)
         self.assertTrue(report["ready"], report)
