@@ -135,7 +135,9 @@ const labels: Record<string, string> = {
   max_weekly_minutes: 'Limite semanal (minutos)',
   capacity: 'Capacidade',
   room_type: 'Tipo de ambiente',
-  required_room_type: 'Ambiente necessário',
+  required_room_type: 'Ambiente prioritário',
+  secondary_room_type: 'Ambiente secundário (opcional)',
+  room_options: 'Ambientes aceitos',
   location: 'Localização',
   course: 'Curso',
   term: 'Período letivo',
@@ -212,7 +214,8 @@ const fieldsets: Record<Resource, Field[]> = {
     { key: 'credits', type: 'number', required: true },
     { key: 'onsite_weekly_hours', type: 'number', required: true },
     { key: 'ead_weekly_hours', type: 'number', required: true },
-    { key: 'required_room_type', options: roomTypeOptions, required: true }
+    { key: 'required_room_type', options: roomTypeOptions, required: true },
+    { key: 'secondary_room_type', options: roomTypeOptions }
   ],
   teachers: [
     { key: 'institution', source: 'institutions', required: true },
@@ -320,7 +323,7 @@ function getResourceColumns(resource: Resource): string[] {
     : resource === 'courses'
     ? ['code', 'name', 'modality']
     : resource === 'subjects'
-    ? ['code', 'name', 'period_number', 'credits', 'total_workload', 'onsite_weekly_hours', 'ead_weekly_hours', 'required_room_type']
+    ? ['code', 'name', 'period_number', 'credits', 'total_workload', 'onsite_weekly_hours', 'ead_weekly_hours', 'room_options']
     : resource === 'teachers'
     ? ['code', 'name', 'color']
     : resource === 'class-groups'
@@ -329,7 +332,8 @@ function getResourceColumns(resource: Resource): string[] {
 }
 
 function displayResourceValue(row: RecordItem, key: string, data: Data) {
-  if (key === 'room_type' || key === 'required_room_type') return roomTypeLabel(row[key]);
+  if (key === 'room_options') return <div className="room-option-list"><span className="room-option-primary">{roomTypeLabel(row.required_room_type)} · Prioritário</span>{Boolean(row.secondary_room_type) && <span className="room-option-secondary">{roomTypeLabel(row.secondary_room_type)} · Secundário</span>}</div>;
+  if (key === 'room_type' || key === 'required_room_type' || key === 'secondary_room_type') return roomTypeLabel(row[key]);
   if (key === 'color') {
     const hex = String(row[key] || '').trim();
     if (!hex) {
@@ -545,6 +549,8 @@ function Modal({
                   ? data[scopeResource].map((entry): [string, string] => [String(entry.id), displayName(entry)])
                   : field.source
                   ? data[field.source].filter((entry) => field.key !== 'time_profile' || (entry.is_active && (!values.course || Number(entry.institution) === Number(data.courses.find((course) => course.id === Number(values.course))?.institution)))).map((entry): [string, string] => [String(entry.id), displayName(entry)])
+                  : field.key === 'secondary_room_type'
+                  ? field.options?.filter(([code]) => code !== values.required_room_type)
                   : field.options;
 
               return (
@@ -569,7 +575,8 @@ function Modal({
                           [field.key]: field.multiple
                             ? Array.from(event.target.selectedOptions).map((option) => option.value).join(',')
                             : event.target.value,
-                          ...(field.key === 'scope' ? { scope_id: '' } : {})
+                          ...(field.key === 'scope' ? { scope_id: '' } : {}),
+                          ...(field.key === 'required_room_type' && values.secondary_room_type === event.target.value ? { secondary_room_type: '' } : {})
                         })
                       }
                     >
@@ -670,7 +677,7 @@ function Modal({
           </div>
           {resource === 'class-groups' && <datalist id="group-name-options">{Array.from({ length: 10 }, (_, index) => index + 1).flatMap((period) => ['A', 'B', 'C', 'D'].map((letter) => <option key={`${period}-${letter}`} value={`${period}º ${letter}`} />))}</datalist>}
           {resource === 'class-groups' && !data['time-profiles'].some((profile) => profile.is_active) && <p className="catalog-hint">Ative Manhã e Noite em Regras de horário antes de cadastrar turmas.</p>}
-          {resource === 'subjects' && <p className="catalog-hint">Cada crédito corresponde a 1 hora-aula semanal de 60 minutos e a 20 horas-aula totais. Exemplo: 4 créditos = 3 horas presenciais + 1 hora EAD por semana. Apenas as horas presenciais entram na grade. O ambiente necessário limita as salas que podem receber a disciplina.</p>}
+          {resource === 'subjects' && <p className="catalog-hint">Cada crédito corresponde a 1 hora-aula semanal de 60 minutos e a 20 horas-aula totais. Exemplo: 4 créditos = 3 horas presenciais + 1 hora EAD por semana. Apenas as horas presenciais entram na grade. O gerador prefere o ambiente prioritário e recorre ao secundário quando necessário.</p>}
 
           {error && (
             <p className="form-error" role="alert">

@@ -71,6 +71,24 @@ class GenerationTests(TestCase):
         self.assertTrue(candidates)
         self.assertEqual({item["room_id"] for item in candidates[0]["allocations"]}, {lab.pk})
 
+    def test_generator_prefers_primary_and_uses_secondary_when_needed(self):
+        subject = self.offering.subject
+        subject.secondary_room_type = Subject.RoomType.LABORATORY
+        subject.save(update_fields=["secondary_room_type"])
+        lab = Room.objects.create(institution=self.room.institution, code="LAB1", name="Laboratório 1", room_type=Room.Type.LABORATORY)
+        state, report, candidates = generation.solve(self.schedule, time_limit=4, alternatives=1)
+        self.assertTrue(report["ready"], report)
+        self.assertIn(state, {"FEASIBLE", "OPTIMAL"})
+        self.assertEqual({item["room_id"] for item in candidates[0]["allocations"]}, {self.room.pk})
+        self.assertEqual({item["room_priority"] for item in candidates[0]["allocations"]}, {"PRIMARY"})
+        self.room.is_active = False
+        self.room.save(update_fields=["is_active"])
+        state, report, candidates = generation.solve(self.schedule, time_limit=4, alternatives=1)
+        self.assertTrue(report["ready"], report)
+        self.assertIn(state, {"FEASIBLE", "OPTIMAL"})
+        self.assertEqual({item["room_id"] for item in candidates[0]["allocations"]}, {lab.pk})
+        self.assertEqual({item["room_priority"] for item in candidates[0]["allocations"]}, {"SECONDARY"})
+
     def test_manual_grid_rejects_incompatible_room(self):
         subject = self.offering.subject
         subject.required_room_type = Subject.RoomType.LABORATORY
@@ -103,6 +121,21 @@ class GenerationTests(TestCase):
         self.assertEqual(subject_changed.status_code, 409, subject_changed.data)
         self.offering.subject.refresh_from_db()
         self.assertEqual(self.offering.subject.required_room_type, Subject.RoomType.CLASSROOM)
+
+    def test_removing_secondary_environment_preserves_existing_lessons(self):
+        subject = self.offering.subject
+        subject.secondary_room_type = Subject.RoomType.LABORATORY
+        subject.save(update_fields=["secondary_room_type"])
+        lab = Room.objects.create(institution=self.room.institution, code="LAB1", name="Laboratório 1", room_type=Room.Type.LABORATORY)
+        created = self.client.post(f"/api/v1/schedules/{self.schedule.pk}/quick-cells/", {
+            "group_id": self.group.pk, "weekday": 1, "slot_id": self.schedule.slots.first().pk,
+            "span": 1, "subject": subject.name, "teacher": self.teacher.name, "room": lab.name,
+        }, format="json", HTTP_IF_MATCH="1")
+        self.assertIn(created.status_code, {200, 201}, created.data)
+        changed = self.client.patch(f"/api/v1/subjects/{subject.pk}/", {"secondary_room_type": ""}, format="json")
+        self.assertEqual(changed.status_code, 409, changed.data)
+        subject.refresh_from_db()
+        self.assertEqual(subject.secondary_room_type, Subject.RoomType.LABORATORY)
 
     def test_student_count_is_not_required_or_used_to_restrict_rooms(self):
         report = generation.preflight(self.schedule)

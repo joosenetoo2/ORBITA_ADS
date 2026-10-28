@@ -8,7 +8,7 @@ type ImportKind = 'courses' | 'subjects' | 'teachers' | 'rooms' | 'class-groups'
 const importLabels: Record<ImportKind, string> = { courses: 'Cursos', subjects: 'Disciplinas', teachers: 'Professores', rooms: 'Salas', 'class-groups': 'Turmas', offerings: 'Ofertas' };
 const examples: Record<ImportKind, string> = {
   courses: 'codigo;nome;modalidade\nADS;Análise e Desenvolvimento de Sistemas;Presencial',
-  subjects: 'codigo;nome;periodo;creditos;horas_presenciais;horas_ead;ambiente_necessario\nOO;Programação OO;2;4;3;1;LABORATORY',
+  subjects: 'codigo;nome;periodo;creditos;horas_presenciais;horas_ead;ambiente_prioritario;ambiente_secundario\nOO;Programação OO;2;4;3;1;LABORATORY;METALAB',
   teachers: 'codigo;nome;cor\nANA;Ana Oliveira;#2563eb\nBRUNO;Bruno Silva;#059669',
   rooms: 'codigo;nome;tipo_de_ambiente;capacidade\nH01;Sala H01;CLASSROOM;40\nLAB01;Laboratório 01;LABORATORY;35',
   'class-groups': 'codigo;nome;periodo;turno\nP1A;1º A;1;Noite\nP1B;1º B;1;Manhã',
@@ -21,7 +21,8 @@ const aliases: Record<string, string> = {
   horas_ead: 'ead_weekly_hours', ead_horas: 'ead_weekly_hours', horas_ead_semanais: 'ead_weekly_hours', ead_weekly_hours: 'ead_weekly_hours',
   ead_percentual: 'ead_percentage', percentual_ead: 'ead_percentage', ead_percentage: 'ead_percentage',
   capacidade: 'capacity', capacity: 'capacity', turma: 'group_code', group_code: 'group_code',
-  ambiente_necessario: 'required_room_type', required_room_type: 'required_room_type',
+  ambiente_necessario: 'required_room_type', ambiente_prioritario: 'required_room_type', required_room_type: 'required_room_type',
+  ambiente_secundario: 'secondary_room_type', secondary_room_type: 'secondary_room_type',
   tipo_de_ambiente: 'room_type', tipo_sala: 'room_type', room_type: 'room_type',
   disciplina: 'subject_code', subject_code: 'subject_code', professor: 'teacher_code', teacher_code: 'teacher_code',
   horas_por_bloco: 'block_hours', block_hours: 'block_hours',

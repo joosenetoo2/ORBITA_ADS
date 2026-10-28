@@ -114,19 +114,19 @@ CourseViewSet = viewset_for(models.Course, serializers.CourseSerializer)
 class SafeRoomEnvironmentUpdateMixin:
     def partial_update(self, request, *args, **kwargs):
         instance = self.get_object()
-        field = "required_room_type" if isinstance(instance, models.Subject) else "room_type"
-        previous = getattr(instance, field)
+        fields = ("required_room_type", "secondary_room_type") if isinstance(instance, models.Subject) else ("room_type",)
+        previous = tuple(getattr(instance, field) for field in fields)
         with transaction.atomic():
             response = super().partial_update(request, *args, **kwargs)
-            instance.refresh_from_db(fields=[field])
-            if getattr(instance, field) == previous:
+            instance.refresh_from_db(fields=fields)
+            if tuple(getattr(instance, field) for field in fields) == previous:
                 return response
             if isinstance(instance, models.Subject):
                 sessions = models.ScheduledSession.objects.filter(requirement__offering__subject=instance).select_related("room")
-                invalid = [session.pk for session in sessions if session.room.room_type != instance.required_room_type]
+                invalid = [session.pk for session in sessions if session.room.room_type not in instance.allowed_room_types()]
             else:
                 sessions = models.ScheduledSession.objects.filter(room=instance).select_related("requirement__offering__subject")
-                invalid = [session.pk for session in sessions if session.requirement.offering.subject.required_room_type != instance.room_type]
+                invalid = [session.pk for session in sessions if instance.room_type not in session.requirement.offering.subject.allowed_room_types()]
             if invalid:
                 transaction.set_rollback(True)
                 return Response({"code": "ROOM_TYPE_AFFECTS_SESSIONS",
@@ -253,10 +253,11 @@ class BatchImportView(APIView):
                         ead = self._integer(row.get("ead_weekly_hours", 0) or 0, "ead_weekly_hours", maximum=credits)
                         period_number = self._integer(row.get("period_number"), "period_number", minimum=1, maximum=20)
                         room_type = self._room_type(row.get("required_room_type"), "required_room_type")
+                        secondary_room_type = self._room_type(row.get("secondary_room_type"), "secondary_room_type") if row.get("secondary_room_type") else ""
                         obj = models.Subject(institution=institution, code=code, name=name, credits=credits,
                                              onsite_weekly_hours=onsite, ead_weekly_hours=ead, period_number=period_number,
                                              total_workload=credits * 20, workload_unit=models.Subject.Unit.CLASS_HOUR,
-                                             required_room_type=room_type)
+                                             required_room_type=room_type, secondary_room_type=secondary_room_type)
                     elif resource == "teachers":
                         if models.Teacher.objects.filter(institution=institution, code__iexact=code).exists():
                             skipped += 1; continue
@@ -867,6 +868,7 @@ class ScheduleViewSet(AcademicViewSet):
             "offerings": [{"id": offer.pk, "group_id": offer.group_id, "subject": offer.subject.name,
                            "onsite_weekly_hours": offer.subject.onsite_weekly_hours,
                            "required_room_type": offer.subject.required_room_type,
+                           "secondary_room_type": offer.subject.secondary_room_type,
                            "teachers": [{"id": teacher.pk, "name": teacher.name, "color": teacher.color} for teacher in offer.eligible_teachers.all()],
                            "blocks": self._grid_blocks(offer)}
                           for offer in offerings],

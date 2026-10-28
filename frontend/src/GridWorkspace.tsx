@@ -42,7 +42,7 @@ type Session = {
   room_code?: string;
   is_locked?: boolean;
 };
-type Offering = { id: number; group_id: number; subject: string; onsite_weekly_hours: number; required_room_type: string; teachers: { id: number; name: string; color?: string }[]; blocks: { duration_minutes: number; remaining: number }[] };
+type Offering = { id: number; group_id: number; subject: string; onsite_weekly_hours: number; required_room_type: string; secondary_room_type: string; teachers: { id: number; name: string; color?: string }[]; blocks: { duration_minutes: number; remaining: number }[] };
 type Grid = { id: number; revision: number; course: string; term: string; institution: string; time_profile: number | null; time_profile_name: string; weekdays: number[]; profiles_active: boolean; profile_slots_in_sync: boolean; available_slot_ids_by_day: Record<string, number[]>; groups: Group[]; offerings: Offering[]; slots: Slot[]; sessions: Session[] };
 type ProfileStructure = { profiles: { id: number; name: string; windows: { weekday: number; start: string; end: string }[] }[]; weekdays: number[]; slots: { start: string; end: string }[] };
 type Cell = { group_id: number; weekday: number; slot_id: number; span: number; subject: string; teacher: string; room: string; session_id?: number; is_locked?: boolean };
@@ -351,7 +351,7 @@ export default function GridWorkspace({ onSetup, onOpenOffers, onOpenTimeProfile
   const cellOffering = cellOfferings.find((item) => item.subject === editor?.subject);
   const cellTeachers = cellOffering?.teachers ?? [];
   const selectedRoom = rooms.find((item) => String(item.name || item.code) === getRoomDisplayName(editor?.room, rooms));
-  const roomMismatch = Boolean(cellOffering && selectedRoom && selectedRoom.room_type !== cellOffering.required_room_type);
+  const roomMismatch = Boolean(cellOffering && selectedRoom && ![cellOffering.required_room_type, cellOffering.secondary_room_type].includes(String(selectedRoom.room_type)));
   const slotAllowed = (day: number, slotId: number) => !grid?.profiles_active || (grid.available_slot_ids_by_day[String(day)] ?? []).includes(slotId);
   const editorStartSlots = grid?.slots.filter((slot) => editor && (slotAllowed(editor.weekday, slot.id) || (editor.session_id && editor.slot_id === slot.id))) ?? [];
   const availableSpans = useMemo(() => {
@@ -1389,7 +1389,7 @@ export default function GridWorkspace({ onSetup, onOpenOffers, onOpenTimeProfile
                 </label>
 
                 <label className="form-field">
-                  Sala / ambiente{cellOffering ? ` · exige ${roomTypeLabel(cellOffering.required_room_type)}` : ''}
+                  Sala / ambiente{cellOffering ? ` · preferência: ${roomTypeLabel(cellOffering.required_room_type)}` : ''}
                   {rooms.length > 0 ? (
                     <select
                       required
@@ -1403,7 +1403,7 @@ export default function GridWorkspace({ onSetup, onOpenOffers, onOpenTimeProfile
                         const display = code && code !== name ? `${name} (${code})` : name;
                         return (
                           <option key={item.id} value={name}>
-                            {display} · {roomTypeLabel(item.room_type)}
+                            {display} · {roomTypeLabel(item.room_type)}{cellOffering && item.room_type === cellOffering.required_room_type ? ' (prioritário)' : cellOffering && item.room_type === cellOffering.secondary_room_type ? ' (secundário)' : ''}
                           </option>
                         );
                       })}
@@ -1424,7 +1424,7 @@ export default function GridWorkspace({ onSetup, onOpenOffers, onOpenTimeProfile
                 {roomMismatch && (
                   <p className="form-error room-type-warning" role="alert">
                     <CircleAlert size={16} />
-                    Esta disciplina exige {roomTypeLabel(cellOffering?.required_room_type)}. A sala escolhida é {roomTypeLabel(selectedRoom?.room_type)}.
+                    Ambientes aceitos: {roomTypeLabel(cellOffering?.required_room_type)}{cellOffering?.secondary_room_type ? ` ou ${roomTypeLabel(cellOffering.secondary_room_type)}` : ''}. A sala escolhida é {roomTypeLabel(selectedRoom?.room_type)}.
                   </p>
                 )}
 

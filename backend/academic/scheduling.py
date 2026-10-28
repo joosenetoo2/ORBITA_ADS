@@ -104,8 +104,11 @@ def validate_session(session, other_sessions=None):
     available = set(session.room.features.values_list("id", flat=True))
     if not required.issubset(available):
         add("ROOM_FEATURES", "A sala não possui todos os recursos exigidos.", "room", session.room_id)
-    if session.room.room_type != offering.subject.required_room_type:
-        add("ROOM_TYPE_MISMATCH", f"Esta disciplina exige {offering.subject.get_required_room_type_display()}; a sala selecionada é {session.room.get_room_type_display()}.", "room", session.room_id)
+    if session.room.room_type not in offering.subject.allowed_room_types():
+        environments = offering.subject.get_required_room_type_display()
+        if offering.subject.secondary_room_type:
+            environments += f" ou {offering.subject.get_secondary_room_type_display()}"
+        add("ROOM_TYPE_MISMATCH", f"Esta disciplina exige {environments}; a sala selecionada é {session.room.get_room_type_display()}.", "room", session.room_id)
 
     scopes = matching_scopes(session)
     windows = [w for w in TimeWindow.objects.filter(institution_id=institution_id, weekday=session.weekday, is_active=True).select_related("profile") if (w.scope, w.scope_id) in scopes and (not w.profile_id or (w.profile_id == session.schedule.time_profile_id and w.profile.is_active))]

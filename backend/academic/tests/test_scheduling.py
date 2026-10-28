@@ -70,6 +70,16 @@ class AllocationValidationTests(TestCase):
         self.room.save(update_fields=["room_type"])
         self.assertNotIn("ROOM_TYPE_MISMATCH", {conflict["code"] for conflict in validate_session(item)})
 
+    def test_secondary_environment_is_allowed(self):
+        self.subject.required_room_type = Subject.RoomType.LABORATORY
+        self.subject.secondary_room_type = Subject.RoomType.CLASSROOM
+        self.subject.save(update_fields=["required_room_type", "secondary_room_type"])
+        item = self.session(1, time(18), time(19, 40))
+        self.assertNotIn("ROOM_TYPE_MISMATCH", {conflict["code"] for conflict in validate_session(item)})
+        self.room.room_type = Room.Type.METALAB
+        self.room.save(update_fields=["room_type"])
+        self.assertIn("ROOM_TYPE_MISMATCH", {conflict["code"] for conflict in validate_session(item)})
+
     def test_specific_teacher_window_restricts_global_window(self):
         TimeWindow.objects.create(institution=self.institution, weekday=1, starts_at=time(20), ends_at=time(22), scope=Scope.TEACHER, scope_id=self.teacher.pk)
         item = self.session(1, time(18), time(19, 40))

@@ -46,10 +46,17 @@ class ScheduleApiTests(TestCase):
         self.assertEqual(room.data["room_type"], "METALAB")
         subject = self.client.post("/api/v1/subjects/", {
             "institution": self.institution.pk, "code": "PROG", "name": "Programação", "period_number": 1,
-            "credits": 4, "onsite_weekly_hours": 4, "required_room_type": "LABORATORY",
+            "credits": 4, "onsite_weekly_hours": 4, "required_room_type": "LABORATORY", "secondary_room_type": "METALAB",
         }, format="json")
         self.assertEqual(subject.status_code, 201, subject.data)
         self.assertEqual(subject.data["required_room_type"], "LABORATORY")
+        self.assertEqual(subject.data["secondary_room_type"], "METALAB")
+        duplicate = self.client.post("/api/v1/subjects/", {
+            "institution": self.institution.pk, "code": "DUP", "name": "Duplicado", "period_number": 1,
+            "required_room_type": "LABORATORY", "secondary_room_type": "LABORATORY",
+        }, format="json")
+        self.assertEqual(duplicate.status_code, 400, duplicate.data)
+        self.assertIn("secondary_room_type", duplicate.data)
 
     def test_existing_schedule_can_gain_grid_rows_without_recreating_groups(self):
         response = self.client.post(f"/api/v1/schedules/{self.schedule.pk}/configure-grid/", {

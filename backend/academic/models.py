@@ -85,6 +85,7 @@ class Subject(ActiveModel):
     ead_weekly_hours = models.PositiveSmallIntegerField(default=0)
     period_number = models.PositiveSmallIntegerField(null=True, blank=True, validators=[MinValueValidator(1)])
     required_room_type = models.CharField(max_length=12, choices=RoomType.choices, default=RoomType.CLASSROOM)
+    secondary_room_type = models.CharField(max_length=12, choices=RoomType.choices, blank=True, default="")
     required_features = models.ManyToManyField("RoomFeature", blank=True)
 
     class Meta:
@@ -94,6 +95,8 @@ class Subject(ActiveModel):
         return f"{self.code} · {self.name}"
 
     def clean(self):
+        if self.secondary_room_type and self.secondary_room_type == self.required_room_type:
+            raise ValidationError({"secondary_room_type": "Escolha um ambiente diferente do prioritário."})
         if self.credits is not None and self.onsite_weekly_hours is not None and self.onsite_weekly_hours > self.credits:
             raise ValidationError({"onsite_weekly_hours": "As horas presenciais semanais não podem exceder os créditos."})
         if self.credits is not None and self.onsite_weekly_hours is not None and self.onsite_weekly_hours + self.ead_weekly_hours > self.credits:
@@ -102,6 +105,9 @@ class Subject(ActiveModel):
             raise ValidationError({"workload_unit": "A carga das disciplinas é sempre em hora-aula de 60 minutos."})
         if self.pk and self.period_number and self.subjectoffering_set.exclude(group__period_number=self.period_number).exists():
             raise ValidationError({"period_number": "Esta disciplina já possui oferta para turma de outro período."})
+
+    def allowed_room_types(self):
+        return {self.required_room_type, self.secondary_room_type} - {""}
 
 
 class Curriculum(ActiveModel):

@@ -204,6 +204,8 @@ def _options(context, offering, teacher, rooms, duration):
                                 "weekday": weekday, "start": start, "end": end,
                                 "slot_id": first.pk, "span": len(chosen),
                                 "preferred": bool(preferred),
+                                "room_priority": "PRIMARY" if room.room_type == offering.subject.required_room_type else "SECONDARY",
+                                "room_penalty": 0 if room.room_type == offering.subject.required_room_type else (end - start) // 60 * 10000,
                                 "preference_penalty": (end - start - preferred) // 60 * 100 if has_preferences else 0})
     return options, rejected
 
@@ -233,10 +235,10 @@ def prepare(schedule, mode="FILL", *, flexible=False):
                "preserved_minutes": existing, "pending_minutes": max(0, remaining)}
         summaries.append(row)
         incompatible_preserved = [session.pk for session in context["preserved"][offering.pk]
-                                  if session.room.room_type != offering.subject.required_room_type]
+                                  if session.room.room_type not in offering.subject.allowed_room_types()]
         if incompatible_preserved:
-            issues.append(issue("ROOM_TYPE_MISMATCH", f"Aulas já alocadas usam sala incompatível. Esta disciplina exige {offering.subject.get_required_room_type_display()}.", offering=offering,
-                                details={"session_ids": incompatible_preserved, "required_room_type": offering.subject.required_room_type}))
+            issues.append(issue("ROOM_TYPE_MISMATCH", "Aulas já alocadas usam ambiente incompatível com as opções da disciplina.", offering=offering,
+                                details={"session_ids": incompatible_preserved, "allowed_room_types": sorted(offering.subject.allowed_room_types())}))
         if remaining < 0:
             issues.append(issue("OVER_ALLOCATED", "A oferta já possui mais horas presenciais do que o previsto.", offering=offering,
                                 details={"excess_minutes": -remaining}))
@@ -249,11 +251,14 @@ def prepare(schedule, mode="FILL", *, flexible=False):
             continue
         required_features = {feature.pk for feature in offering.required_features.all()} | {feature.pk for feature in offering.subject.required_features.all()}
         compatible = [room for room in context["rooms"]
-                      if room.room_type == offering.subject.required_room_type
+                      if room.room_type in offering.subject.allowed_room_types()
                       and required_features.issubset({feature.pk for feature in room.features.all()})]
         if not compatible:
-            issues.append(issue("NO_COMPATIBLE_ROOM", f"Não há {offering.subject.get_required_room_type_display()} ativa com os recursos exigidos pela disciplina.", offering=offering,
-                                details={"required_room_type": offering.subject.required_room_type, "required_feature_ids": sorted(required_features)}))
+            environments = offering.subject.get_required_room_type_display()
+            if offering.subject.secondary_room_type:
+                environments += f" ou {offering.subject.get_secondary_room_type_display()}"
+            issues.append(issue("NO_COMPATIBLE_ROOM", f"Não há ambiente ativo do tipo {environments} com os recursos exigidos pela disciplina.", offering=offering,
+                                details={"allowed_room_types": sorted(offering.subject.allowed_room_types()), "required_feature_ids": sorted(required_features)}))
             continue
         durations = _partitions(offering, remaining, flexible)
         if remaining % 60:
@@ -341,7 +346,7 @@ def _solve_once(context, blocks, *, time_limit, excluded=()):
                     model.AddBoolOr([left_var.Not(), right_var.Not()])
     for excluded_choices in excluded:
         model.AddBoolOr([variables[block][option].Not() for block, option in excluded_choices])
-    model.Minimize(sum(variable * (option["preference_penalty"] + option["weekday"] * 12 + option["start"] // 60 + option["room_id"] % 5)
+    model.Minimize(sum(variable * (option["room_penalty"] + option["preference_penalty"] + option["weekday"] * 12 + option["start"] // 60 + option["room_id"] % 5)
                        for block, row in zip(blocks, variables)
                        for variable, option in zip(row, block["options"])))
     solver = cp_model.CpSolver()
